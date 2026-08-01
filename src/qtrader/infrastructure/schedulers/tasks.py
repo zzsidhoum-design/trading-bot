@@ -87,13 +87,80 @@ async def analyze_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -
     )
 
 
+async def predict_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -> str:
+    """Prediction cycle: probability-of-movement for the current candidates."""
+    from qtrader.application.agents.prediction import PredictionAgent
+    from qtrader.application.agents.scanner import MarketScanner
+    from qtrader.config.container import get_container
+
+    container = get_container()
+    scanner = container.resolve(MarketScanner)
+    if symbols is None:
+        top = await scanner.scan_all()
+        symbols = [c.symbol for c in top]
+    predicted = await container.resolve(PredictionAgent).predict_candidates(symbols)
+    return f"predicted {predicted}/{len(symbols)} symbols"
+
+
+async def decide_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -> str:
+    """Chief cycle: fused BUY/SELL/HOLD decisions for the current candidates."""
+    from qtrader.application.agents.chief import ChiefAgent
+    from qtrader.application.agents.scanner import MarketScanner
+    from qtrader.config.container import get_container
+
+    container = get_container()
+    scanner = container.resolve(MarketScanner)
+    if symbols is None:
+        top = await scanner.scan_all()
+        symbols = [c.symbol for c in top]
+    decided = await container.resolve(ChiefAgent).decide_candidates(symbols)
+    return f"decided {decided}/{len(symbols)} symbols"
+
+
+async def train_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -> str:
+    """Nightly model training: fit + register + promote when the threshold passes."""
+    from qtrader.application.services.model_trainer import ModelTrainer
+    from qtrader.config.container import get_container
+
+    container = get_container()
+    settings = container.resolve(Settings)
+    if symbols is None:
+        symbols = settings.watchlist_symbols
+    result = await container.resolve(ModelTrainer).train(
+        symbols,
+        settings.scan_interval,
+        horizon_bars=settings.train_horizon_bars,
+        lookback_bars=settings.train_lookback_bars,
+        min_samples=settings.train_min_samples,
+        promote_threshold=settings.train_promote_threshold,
+    )
+    if result is None:
+        return "train: insufficient samples"
+    acc = result.metrics.get("accuracy")
+    return (
+        f"train: {result.name} v{result.version} "
+        f"acc={acc} promoted={result.promoted}"
+    )
+
+
 class WorkerSettings:
-    functions = [heartbeat, backfill, scan_cycle, analyze_cycle]
+    functions = [
+        heartbeat,
+        backfill,
+        scan_cycle,
+        analyze_cycle,
+        predict_cycle,
+        decide_cycle,
+        train_cycle,
+    ]
 
     cron_jobs = [
         cron(heartbeat, name="heartbeat", second=0),
         cron(scan_cycle, name="scan_cycle", minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(analyze_cycle, name="analyze_cycle", minute={2, 17, 32, 47}),
+        cron(predict_cycle, name="predict_cycle", minute={4, 19, 34, 49}),
+        cron(decide_cycle, name="decide_cycle", minute={6, 21, 36, 51}),
+        cron(train_cycle, name="train_cycle", hour={2}, minute=0),
     ]
 
     redis_settings = RedisSettings.from_dsn(Settings().redis_url)

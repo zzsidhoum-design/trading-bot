@@ -63,6 +63,21 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
 
+    # Phase 4 — prediction & decisions
+    prediction_model_name: str = "momentum"
+    prediction_horizon: str = "intraday"
+    prediction_lookback_bars: int = 120
+    prediction_min_bars: int = 30
+    train_horizon_bars: int = 12
+    train_lookback_bars: int = 120
+    train_min_samples: int = 100
+    train_promote_threshold: float = 0.52
+    decision_weights: str = "technical:0.30,news:0.25,fundamental:0.20,prediction:0.25"
+    decision_buy_threshold: float = 0.15
+    decision_sell_threshold: float = -0.15
+    decision_conflict_threshold: float = 0.5
+    decision_min_coverage: float = 0.5
+
     @field_validator("postgres_port")
     @classmethod
     def _port_range(cls, value: int) -> int:
@@ -91,6 +106,16 @@ class Settings(BaseSettings):
     def scan_interval(self) -> Interval:
         """Default intraday interval used by the Market Scanner."""
         return Interval.M5
+
+    @property
+    def decision_weights_dict(self) -> dict[str, float]:
+        """Parsed per-agent decision weights (e.g. ``technical:0.30,...``)."""
+        weights: dict[str, float] = {}
+        for part in self.decision_weights.split(","):
+            if ":" in part:
+                key, value = part.split(":", 1)
+                weights[key.strip().lower()] = float(value)
+        return weights
 
 
 @lru_cache

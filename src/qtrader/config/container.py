@@ -14,17 +14,24 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
+from qtrader.application.agents.chief import ChiefAgent
 from qtrader.application.agents.data import DataAgent
 from qtrader.application.agents.fundamental import FundamentalAgent
 from qtrader.application.agents.news import NewsAgent
+from qtrader.application.agents.prediction import PredictionAgent
 from qtrader.application.agents.scanner import MarketScanner
 from qtrader.application.agents.technical import TechnicalAgent
 from qtrader.application.services.bar_cleaner import BarCleaner
+from qtrader.application.services.decision_strategy import EnsembleDecisionStrategy
+from qtrader.application.services.feature_store import FeatureStore
 from qtrader.application.services.indicators import IndicatorEngine
+from qtrader.application.services.model_trainer import ModelTrainer
 from qtrader.config.settings import Settings
 from qtrader.domain.events import BackfillCompleted, ScanCompleted
 from qtrader.domain.ports import (
     Cache,
+    DecisionRepository,
+    DecisionStrategy,
     EventBus,
     EventRepository,
     FundamentalProvider,
@@ -33,9 +40,11 @@ from qtrader.domain.ports import (
     LLMClient,
     Lock,
     MarketDataProvider,
+    ModelRepository,
     NewsProvider,
     NewsRepository,
     PortfolioRepository,
+    PredictionRepository,
     PriceRepository,
     SignalRepository,
     StockRepository,
@@ -44,11 +53,14 @@ from qtrader.infrastructure.cache import RedisCache, RedisLock
 from qtrader.infrastructure.data_providers.fundamental import StubFundamentalProvider
 from qtrader.infrastructure.data_providers.yahoo import YahooFinanceProvider
 from qtrader.infrastructure.database.repositories import (
+    SQLAlchemyDecisionRepository,
     SQLAlchemyEventRepository,
     SQLAlchemyFundamentalRepository,
     SQLAlchemyIndicatorRepository,
+    SQLAlchemyModelRepository,
     SQLAlchemyNewsRepository,
     SQLAlchemyPortfolioRepository,
+    SQLAlchemyPredictionRepository,
     SQLAlchemyPriceRepository,
     SQLAlchemySignalRepository,
     SQLAlchemyStockRepository,
@@ -97,6 +109,9 @@ class Container:
         c.register(IndicatorRepository, instance=SQLAlchemyIndicatorRepository(session_factory))
         c.register(NewsRepository, instance=SQLAlchemyNewsRepository(session_factory))
         c.register(FundamentalRepository, instance=SQLAlchemyFundamentalRepository(session_factory))
+        c.register(PredictionRepository, instance=SQLAlchemyPredictionRepository(session_factory))
+        c.register(DecisionRepository, instance=SQLAlchemyDecisionRepository(session_factory))
+        c.register(ModelRepository, instance=SQLAlchemyModelRepository(session_factory))
 
         c.register(FundamentalProvider, instance=StubFundamentalProvider())
 
@@ -173,9 +188,56 @@ class Container:
         )
         c.register(FundamentalAgent, instance=fundamental)
 
+        feature_store = FeatureStore(
+            prices=c.resolve(PriceRepository),
+            indicators=c.resolve(IndicatorRepository),
+            signals=c.resolve(SignalRepository),
+        )
+        c.register(FeatureStore, instance=feature_store)
+
+        strategy = EnsembleDecisionStrategy(
+            weights=self._settings.decision_weights_dict,
+            buy_threshold=self._settings.decision_buy_threshold,
+            sell_threshold=self._settings.decision_sell_threshold,
+            conflict_threshold=self._settings.decision_conflict_threshold,
+            min_coverage=self._settings.decision_min_coverage,
+        )
+        c.register(DecisionStrategy, instance=strategy)
+
+        prediction = PredictionAgent(
+            features=feature_store,
+            models=c.resolve(ModelRepository),
+            predictions=c.resolve(PredictionRepository),
+            bus=bus,
+            model_name=self._settings.prediction_model_name,
+            horizon=self._settings.prediction_horizon,
+            interval=self._settings.scan_interval,
+            lookback_bars=self._settings.prediction_lookback_bars,
+            min_bars=self._settings.prediction_min_bars,
+        )
+        c.register(PredictionAgent, instance=prediction)
+
+        chief = ChiefAgent(
+            signals=c.resolve(SignalRepository),
+            predictions=c.resolve(PredictionRepository),
+            decisions=c.resolve(DecisionRepository),
+            bus=bus,
+            strategy=strategy,
+        )
+        c.register(ChiefAgent, instance=chief)
+
+        trainer = ModelTrainer(
+            prices=c.resolve(PriceRepository),
+            model_repo=c.resolve(ModelRepository),
+            model_name=self._settings.prediction_model_name,
+        )
+        c.register(ModelTrainer, instance=trainer)
+
         bus.subscribe(ScanCompleted, technical.on_event)
         bus.subscribe(ScanCompleted, news.on_event)
         bus.subscribe(ScanCompleted, fundamental.on_event)
+        bus.subscribe(ScanCompleted, prediction.on_event)
+        bus.subscribe(ScanCompleted, chief.on_event)
 
     def resolve(self, service_type: type[T]) -> T:
         return cast(T, self._container.resolve(service_type))

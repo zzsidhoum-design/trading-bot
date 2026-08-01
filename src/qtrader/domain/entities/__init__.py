@@ -11,6 +11,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from qtrader.domain.value_objects import (
+    Decision,
     Interval,
     Money,
     OrderStatus,
@@ -181,3 +182,71 @@ class FundamentalData:
     earnings_growth: Decimal | None = None
     price_to_book: Decimal | None = None
     fundamental_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Prediction:
+    """Probability-of-movement output persisted by the Prediction Agent."""
+
+    symbol: str
+    model_name: str
+    model_version: int
+    horizon: str
+    prob_up: Decimal | None = None
+    prob_down: Decimal | None = None
+    prob_trend: Decimal | None = None
+    confidence: Decimal | None = None
+    expected_return: Decimal | None = None
+    expected_volatility: Decimal | None = None
+    features_hash: str | None = None
+    created_at: datetime = field(default_factory=_now)
+    prediction_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RegisteredModel:
+    """A versioned model entry in the model registry."""
+
+    name: str
+    version: int
+    artifact_path: str | None = None
+    hyperparams: dict | None = None
+    offline_metrics: dict | None = None
+    is_active: bool = False
+    status: str = "registered"
+    trained_at: datetime | None = None
+    training_window: str | None = None
+    model_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionRecord:
+    """A persisted Chief-agent decision (the Memory System log)."""
+
+    decision_uuid: str
+    symbol: str
+    decision: Decision
+    confidence: Decimal
+    rationale: str
+    agent_scores: dict = field(default_factory=dict)
+    created_at: datetime = field(default_factory=_now)
+    decision_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentEvidence:
+    """One explainable input to the ensemble decision engine."""
+
+    agent: str
+    score: float  # signed strength in [-1, 1]
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionOutcome:
+    """Result of the ensemble: a decision plus full rationale."""
+
+    decision: Decision
+    confidence: float
+    rationale: str
+    agent_scores: dict[str, float] = field(default_factory=dict)

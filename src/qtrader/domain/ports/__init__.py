@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
+from qtrader.domain.entities import AgentEvidence, DecisionOutcome
 from qtrader.domain.events import DomainEvent
 from qtrader.domain.value_objects import PriceBar
 
@@ -182,6 +183,48 @@ class FundamentalRepository(ABC):
     async def latest(self, symbol: str) -> Any | None: ...
 
 
+class PredictionRepository(ABC):
+    @abstractmethod
+    async def save(self, prediction: Any) -> Any: ...
+
+    @abstractmethod
+    async def latest_for_symbol(self, symbol: str, limit: int = 20) -> list[Any]: ...
+
+
+class DecisionRepository(ABC):
+    @abstractmethod
+    async def save(self, record: Any) -> Any: ...
+
+    @abstractmethod
+    async def latest_for_symbol(self, symbol: str, limit: int = 20) -> list[Any]: ...
+
+
+class ModelRepository(ABC):
+    """Versioned ML model registry (active version used for inference)."""
+
+    @abstractmethod
+    async def load_active(self, name: str) -> Any | None: ...
+
+    @abstractmethod
+    async def create_version(
+        self,
+        name: str,
+        hyperparams: dict[str, Any],
+        training_window: str | None,
+        offline_metrics: dict[str, Any],
+    ) -> int: ...
+
+    @abstractmethod
+    async def promote(self, name: str, version: int) -> None: ...
+
+
+class DecisionStrategy(ABC):
+    """Pluggable decision engine — fuses evidence streams into a Decision."""
+
+    @abstractmethod
+    def decide(self, evidence: list[AgentEvidence]) -> DecisionOutcome: ...
+
+
 class EventRepository(ABC):
     """Outbox / audit journal of every domain event."""
 
@@ -244,13 +287,3 @@ class LLMClient(ABC):
 
     @abstractmethod
     async def complete_json(self, system_prompt: str, user_prompt: str, schema: type[T]) -> T: ...
-
-
-class ModelRepository(ABC):
-    @abstractmethod
-    async def load_active(self, name: str) -> Any | None: ...
-
-    @abstractmethod
-    async def register(
-        self, name: str, version: int, artifact_path: str, metrics: dict[str, Any]
-    ) -> None: ...

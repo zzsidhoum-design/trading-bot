@@ -22,9 +22,11 @@ class AgentRegistry:
 
 def default_registry() -> AgentRegistry:
     """All agents built in this phase, importable by the CLI."""
+    from qtrader.application.agents.chief import ChiefAgent
     from qtrader.application.agents.data import DataAgent
     from qtrader.application.agents.fundamental import FundamentalAgent
     from qtrader.application.agents.news import NewsAgent
+    from qtrader.application.agents.prediction import PredictionAgent
     from qtrader.application.agents.scanner import MarketScanner
     from qtrader.application.agents.technical import TechnicalAgent
 
@@ -34,4 +36,6 @@ def default_registry() -> AgentRegistry:
     registry.register(TechnicalAgent)
     registry.register(NewsAgent)
     registry.register(FundamentalAgent)
+    registry.register(PredictionAgent)
+    registry.register(ChiefAgent)
     return registry
