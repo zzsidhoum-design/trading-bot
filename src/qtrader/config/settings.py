@@ -7,7 +7,7 @@ from functools import lru_cache
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from qtrader.domain.value_objects import TradingMode
+from qtrader.domain.value_objects import Interval, TradingMode
 
 
 class Settings(BaseSettings):
@@ -34,7 +34,17 @@ class Settings(BaseSettings):
     api_port: int = 8000
     api_key: str = "change-me"
 
-    # Future phases (declared now so env schema is stable):
+    # Phase 2 — data ingestion & scanning
+    watchlist: str = "AAPL,MSFT,TSLA"
+    data_provider: str = "yahoo"
+    backfill_days: int = 30
+    quote_cache_ttl_seconds: int = 300
+    scan_top_k: int = 20
+    scan_lookback_bars: int = 60
+    scan_momentum_lookback: int = 20
+    scan_min_dollar_volume: float = 500_000.0
+    scan_min_atr_pct: float = 0.3
+    # Phase 3+ (declared now so env schema is stable):
     yahoo_enabled: bool = True
     polygon_api_key: str | None = None
     alpaca_api_key: str | None = None
@@ -62,6 +72,16 @@ class Settings(BaseSettings):
     def live_enabled(self) -> bool:
         """Live trading requires the mode AND the explicit enable flag."""
         return self.qtrader_mode is TradingMode.LIVE and self.enable_live_trading
+
+    @property
+    def watchlist_symbols(self) -> list[str]:
+        """Parsed watchlist (comma-separated, trimmed, uppercased)."""
+        return [s.strip().upper() for s in self.watchlist.split(",") if s.strip()]
+
+    @property
+    def scan_interval(self) -> Interval:
+        """Default intraday interval used by the Market Scanner."""
+        return Interval.M5
 
 
 @lru_cache

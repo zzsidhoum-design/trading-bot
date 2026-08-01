@@ -6,12 +6,14 @@ from the cron entry. Tasks must be idempotent — arq guarantees at-least-once.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from arq import cron
 from arq.connections import RedisSettings
 
 from qtrader.config.settings import Settings
+from qtrader.domain.value_objects import Interval
 
 
 async def heartbeat(ctx: dict[str, Any]) -> str:
@@ -28,14 +30,39 @@ async def heartbeat(ctx: dict[str, Any]) -> str:
     return f"heartbeat db={db_ok}"
 
 
-async def backfill(ctx: dict[str, Any], symbol: str | None = None) -> str:
-    """Placeholder for the Data Agent backfill job (Phase 2)."""
-    return f"backfill requested for {symbol or 'all'} (not yet implemented)"
+async def backfill(
+    ctx: dict[str, Any],
+    symbol: str | None = None,
+    interval: str | None = None,
+    days: int | None = None,
+) -> str:
+    """Data Agent job: pull clean history for the watchlist (or one symbol)."""
+    from qtrader.application.agents.data import DataAgent
+    from qtrader.config.container import get_container
+
+    container = get_container()
+    settings = container.resolve(Settings)
+    agent = container.resolve(DataAgent)
+    iv = Interval(interval) if interval else settings.scan_interval
+    symbols = [symbol] if symbol else settings.watchlist_symbols
+    end = datetime.now(UTC)
+    start = end - timedelta(days=days or settings.backfill_days)
+    total = 0
+    for sym in symbols:
+        inserted = await agent.backfill(sym, iv, start, end)
+        total += inserted
+    return f"backfilled {total} bars for {len(symbols)} symbols ({iv})"
 
 
 async def scan_cycle(ctx: dict[str, Any]) -> str:
-    """Placeholder for the Market Scanner cycle (Phase 2)."""
-    return "scan_cycle not yet implemented"
+    """Market Scanner cycle: recompute top-K rankings."""
+    from qtrader.application.agents.scanner import MarketScanner
+    from qtrader.config.container import get_container
+
+    container = get_container()
+    scanner = container.resolve(MarketScanner)
+    top = await scanner.scan_all()
+    return f"scan produced {len(top)} candidates"
 
 
 class WorkerSettings:

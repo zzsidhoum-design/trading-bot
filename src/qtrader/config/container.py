@@ -14,17 +14,23 @@ from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
+from qtrader.application.agents.data import DataAgent
+from qtrader.application.agents.scanner import MarketScanner
+from qtrader.application.services.bar_cleaner import BarCleaner
 from qtrader.config.settings import Settings
+from qtrader.domain.events import BackfillCompleted
 from qtrader.domain.ports import (
     Cache,
     EventBus,
     EventRepository,
     Lock,
+    MarketDataProvider,
     PortfolioRepository,
     PriceRepository,
     StockRepository,
 )
 from qtrader.infrastructure.cache import RedisCache, RedisLock
+from qtrader.infrastructure.data_providers.yahoo import YahooFinanceProvider
 from qtrader.infrastructure.database.repositories import (
     SQLAlchemyEventRepository,
     SQLAlchemyPortfolioRepository,
@@ -45,6 +51,7 @@ class Container:
         self._container = punq.Container()
         self._engine: AsyncEngine | None = None
         self._redis_client: Redis | None = None
+        self._provider: YahooFinanceProvider | None = None
         self._build()
 
     def _build(self) -> None:
@@ -67,6 +74,38 @@ class Container:
         c.register(StockRepository, instance=SQLAlchemyStockRepository(session_factory))
         c.register(PortfolioRepository, instance=SQLAlchemyPortfolioRepository(session_factory))
         c.register(PriceRepository, instance=SQLAlchemyPriceRepository(session_factory))
+
+        cleaner = BarCleaner()
+        c.register(BarCleaner, instance=cleaner)
+
+        provider = YahooFinanceProvider()
+        self._provider = provider
+        c.register(MarketDataProvider, instance=provider)
+
+        bus = c.resolve(EventBus)
+        data_agent = DataAgent(
+            provider=provider,
+            prices=c.resolve(PriceRepository),
+            cache=c.resolve(Cache),
+            bus=bus,
+            cleaner=cleaner,
+            quote_cache_ttl_seconds=self._settings.quote_cache_ttl_seconds,
+        )
+        c.register(DataAgent, instance=data_agent)
+
+        scanner = MarketScanner(
+            prices=c.resolve(PriceRepository),
+            cache=c.resolve(Cache),
+            stocks=c.resolve(StockRepository),
+            bus=bus,
+            top_k=self._settings.scan_top_k,
+            lookback_bars=self._settings.scan_lookback_bars,
+            momentum_lookback=self._settings.scan_momentum_lookback,
+            min_dollar_volume=self._settings.scan_min_dollar_volume,
+            min_atr_pct=self._settings.scan_min_atr_pct,
+        )
+        c.register(MarketScanner, instance=scanner)
+        bus.subscribe(BackfillCompleted, scanner.on_event)
 
     def resolve(self, service_type: type[T]) -> T:
         return cast(T, self._container.resolve(service_type))
@@ -91,7 +130,9 @@ class Container:
             return False
 
     async def aclose(self) -> None:
-        """Best-effort release of engine pool and redis connection."""
+        """Best-effort release of engine pool, redis and provider connections."""
+        if self._provider is not None:
+            await self._provider.close()
         if self._redis_client is not None:
             await self._redis_client.aclose()
         if self._engine is not None:

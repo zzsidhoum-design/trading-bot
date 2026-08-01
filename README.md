@@ -2,7 +2,7 @@
 
 Professional, scalable, event-driven trading platform. Python 3.12+, Clean Architecture, SOLID, async everywhere.
 
-> **Status: DESIGN MILESTONE** — architecture and full design are frozen in `docs/`. Implementation proceeds phase by phase (see Roadmap). No live trading is possible until the graduation gate is satisfied (see `docs/06-testing.md`).
+> **Status: PHASE 1 & 2 COMPLETE** — foundation, DB, API, worker and the first two agents (Data + Scanner) are implemented and verified against the live container stack (`docker compose`). See the Roadmap for what remains.
 
 ## Capabilities
 
@@ -59,8 +59,8 @@ scripts/         dev/ops helpers
 
 ## Roadmap (each phase ends with review + tests green)
 
-1. **Foundation** — package config, pyproject, docker-compose, DI container, DB models + first Alembic migration, repositories, event bus, structured logging. *(in progress after design)*
-2. **Data + Scanner** — providers, Data Agent, cleaning, indicator engine, Market Scanner, Redis rankings.
+1. **Foundation** — package config, pyproject, docker-compose, DI container, DB models + first Alembic migration, repositories, event bus, structured logging. ✅ *(complete)*
+2. **Data + Scanner** — providers (Yahoo), Data Agent, cleaning, Market Scanner, Redis rankings. ✅ *(complete)*
 3. **Analysis agents** — Technical, News (LLM), Fundamental + their signal tables.
 4. **Prediction + Chief** — FeatureStore, model training/inference, ensemble decision engine.
 5. **Risk + Portfolio + Execution** — RiskCalculator, allocation policies, broker adapters (Paper/Alpaca), Memory System wiring.
