@@ -7,9 +7,11 @@ with fakes. Application code never constructs dependencies directly.
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import TypeVar, cast
 
 import punq
 from redis.asyncio import Redis
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from qtrader.config.settings import Settings
@@ -31,6 +33,8 @@ from qtrader.infrastructure.database.repositories import (
 )
 from qtrader.infrastructure.database.session import build_engine, build_session_factory
 from qtrader.infrastructure.eventbus import InProcessEventBus
+
+T = TypeVar("T")
 
 
 class Container:
@@ -64,8 +68,27 @@ class Container:
         c.register(PortfolioRepository, instance=SQLAlchemyPortfolioRepository(session_factory))
         c.register(PriceRepository, instance=SQLAlchemyPriceRepository(session_factory))
 
-    def resolve(self, service_type: type) -> object:
-        return self._container.resolve(service_type)
+    def resolve(self, service_type: type[T]) -> T:
+        return cast(T, self._container.resolve(service_type))
+
+    async def database_healthy(self) -> bool:
+        if self._engine is None:
+            return False
+        try:
+            async with self._engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            return True
+        except Exception:
+            return False
+
+    async def cache_healthy(self) -> bool:
+        if self._redis_client is None:
+            return False
+        try:
+            await RedisCache(self._redis_client).set("health:probe", "1", ttl_seconds=5)
+            return True
+        except Exception:
+            return False
 
     async def aclose(self) -> None:
         """Best-effort release of engine pool and redis connection."""

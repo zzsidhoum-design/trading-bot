@@ -31,6 +31,8 @@ dependencies = [
     "structlog>=24.1",
     "punq>=0.7",
     "typer>=0.12",
+    # scheduler / worker
+    "arq>=0.26",
 ]
 
 [project.optional-dependencies]
@@ -86,6 +88,7 @@ no_implicit_optional = true
 strict_optional = true
 explicit_package_bases = true
 mypy_path = "src"
+disable_error_code = ["type-abstract"]
 
 [[tool.mypy.overrides]]
 module = "typer.*"
