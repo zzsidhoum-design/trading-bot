@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     scan_momentum_lookback: int = 20
     scan_min_dollar_volume: float = 500_000.0
     scan_min_atr_pct: float = 0.3
+
+    # Phase 3 — analysis agents
+    technical_history_bars: int = 260
+    technical_min_bars: int = 60
+    news_lookback_hours: int = 24
+    news_per_symbol_limit: int = 20
+    fundamental_max_age_days: int = 120
+    llm_model: str = "gpt-4o-mini"
+
     # Phase 3+ (declared now so env schema is stable):
     yahoo_enabled: bool = True
     polygon_api_key: str | None = None

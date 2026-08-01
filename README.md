@@ -2,7 +2,7 @@
 
 Professional, scalable, event-driven trading platform. Python 3.12+, Clean Architecture, SOLID, async everywhere.
 
-> **Status: PHASE 1 & 2 COMPLETE** — foundation, DB, API, worker and the first two agents (Data + Scanner) are implemented and verified against the live container stack (`docker compose`). See the Roadmap for what remains.
+> **Status: PHASE 1, 2 & 3 COMPLETE** — foundation, DB, API, worker and the first five agents (Data, Scanner, Technical, News, Fundamental) are implemented and verified against the live container stack (`docker compose`). See the Roadmap for what remains.
 
 ## Capabilities
 

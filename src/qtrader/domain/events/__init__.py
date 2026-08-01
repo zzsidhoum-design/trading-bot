@@ -141,6 +141,42 @@ class NewsSignalGenerated(SignalGenerated):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class TechnicalSignalGenerated(SignalGenerated):
+    interval: Interval
+    sub_scores: dict[str, float] = field(default_factory=dict)
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "agent": self.agent,
+            "signal_type": self.signal_type,
+            "score": self.score,
+            "interval": self.interval,
+            "sub_scores": self.sub_scores,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FundamentalSignalGenerated(SignalGenerated):
+    rating: str
+    as_of: str
+    sub_scores: dict[str, float] = field(default_factory=dict)
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "symbol": self.symbol,
+            "agent": self.agent,
+            "signal_type": self.signal_type,
+            "score": self.score,
+            "rating": self.rating,
+            "as_of": self.as_of,
+            "sub_scores": self.sub_scores,
+            "metadata": self.metadata,
+        }
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PredictionGenerated(DomainEvent, EventMeta):
     symbol: str
     model_name: str

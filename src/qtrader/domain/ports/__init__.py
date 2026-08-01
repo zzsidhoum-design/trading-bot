@@ -158,6 +158,30 @@ class SignalRepository(ABC):
     async def latest_for_symbol(self, symbol: str, agent: str | None = None) -> list[Any]: ...
 
 
+class IndicatorRepository(ABC):
+    @abstractmethod
+    async def save_snapshot(self, snapshot: Any) -> None: ...
+
+    @abstractmethod
+    async def latest(self, symbol: str, interval: Any) -> Any | None: ...
+
+
+class NewsRepository(ABC):
+    @abstractmethod
+    async def upsert(self, items: list[Any]) -> int: ...
+
+    @abstractmethod
+    async def recent(self, symbol: str | None, since: Any, limit: int) -> list[Any]: ...
+
+
+class FundamentalRepository(ABC):
+    @abstractmethod
+    async def upsert(self, data: Any) -> Any: ...
+
+    @abstractmethod
+    async def latest(self, symbol: str) -> Any | None: ...
+
+
 class EventRepository(ABC):
     """Outbox / audit journal of every domain event."""
 
@@ -206,6 +230,13 @@ class BrokerGateway(ABC):
 class NewsProvider(ABC):
     @abstractmethod
     async def fetch_news(self, symbol: str | None, since: Any, limit: int) -> list[Any]: ...
+
+
+class FundamentalProvider(ABC):
+    """Source of financial statements / valuation metrics."""
+
+    @abstractmethod
+    async def fetch_fundamentals(self, symbol: str) -> Any | None: ...
 
 
 class LLMClient(ABC):

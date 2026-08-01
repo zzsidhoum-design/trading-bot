@@ -65,12 +65,35 @@ async def scan_cycle(ctx: dict[str, Any]) -> str:
     return f"scan produced {len(top)} candidates"
 
 
+async def analyze_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -> str:
+    """Phase 3 analysis cycle: technical, news & fundamental for the candidates."""
+    from qtrader.application.agents.fundamental import FundamentalAgent
+    from qtrader.application.agents.news import NewsAgent
+    from qtrader.application.agents.scanner import MarketScanner
+    from qtrader.application.agents.technical import TechnicalAgent
+    from qtrader.config.container import get_container
+
+    container = get_container()
+    scanner = container.resolve(MarketScanner)
+    if symbols is None:
+        top = await scanner.scan_all()
+        symbols = [c.symbol for c in top]
+    technical = await container.resolve(TechnicalAgent).analyze_candidates(symbols)
+    news = await container.resolve(NewsAgent).analyze_candidates(symbols)
+    fundamental = await container.resolve(FundamentalAgent).analyze_candidates(symbols)
+    return (
+        f"analyzed {len(symbols)} symbols: "
+        f"technical={technical} news={news} fundamental={fundamental}"
+    )
+
+
 class WorkerSettings:
-    functions = [heartbeat, backfill, scan_cycle]
+    functions = [heartbeat, backfill, scan_cycle, analyze_cycle]
 
     cron_jobs = [
         cron(heartbeat, name="heartbeat", second=0),
         cron(scan_cycle, name="scan_cycle", minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
+        cron(analyze_cycle, name="analyze_cycle", minute={2, 17, 32, 47}),
     ]
 
     redis_settings = RedisSettings.from_dsn(Settings().redis_url)

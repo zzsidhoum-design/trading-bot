@@ -93,3 +93,7 @@ disable_error_code = ["type-abstract"]
 [[tool.mypy.overrides]]
 module = "typer.*"
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pandas.*"
+ignore_missing_imports = true
