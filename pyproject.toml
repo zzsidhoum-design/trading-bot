@@ -54,6 +54,7 @@ packages = ["src/qtrader"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+asyncio_default_test_loop_scope = "session"
 markers = [
     "integration: requires live Postgres/Redis (docker compose)",
     "e2e: full end-to-end pipeline run",

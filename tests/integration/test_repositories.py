@@ -10,11 +10,13 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from qtrader.config.settings import Settings
 from qtrader.domain.entities import Portfolio, Stock
 from qtrader.domain.value_objects import Interval, Money, PriceBar, TradingMode
+from qtrader.infrastructure.database.models import PriceModel, StockModel
 from qtrader.infrastructure.database.repositories import (
     SQLAlchemyPortfolioRepository,
     SQLAlchemyPriceRepository,
@@ -69,6 +71,13 @@ async def test_price_bars_upsert_and_history(session_factory: async_sessionmaker
     price_repo = SQLAlchemyPriceRepository(session_factory)
 
     await stock_repo.upsert(Stock(symbol="TSTB", exchange="XNAS", name="Test Bars"))
+    async with session_factory() as session:
+        stock_id = await session.scalar(
+            select(StockModel.id).where(StockModel.symbol == "TSTB")
+        )
+        assert stock_id is not None
+        await session.execute(delete(PriceModel).where(PriceModel.stock_id == stock_id))
+        await session.commit()
     ts = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
     bars = [
         PriceBar(

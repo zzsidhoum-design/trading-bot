@@ -150,9 +150,9 @@ class SQLAlchemyPriceRepository(PriceRepository):
         async with self._session_factory() as session:
             symbols = {b.symbol for b in bars}
             rows = await session.scalars(
-                select(StockModel.id, StockModel.symbol).where(StockModel.symbol.in_(symbols))
+                select(StockModel).where(StockModel.symbol.in_(symbols))
             )
-            stock_ids: dict[str, int] = {symbol: stock_id for stock_id, symbol in rows}
+            stock_ids: dict[str, int] = {r.symbol: r.id for r in rows}
             payload = [
                 {
                     "stock_id": stock_ids[b.symbol],
