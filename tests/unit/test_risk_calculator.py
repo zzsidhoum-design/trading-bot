@@ -43,6 +43,31 @@ def test_sell_without_position_rejected() -> None:
     assert "no open position to close" in assessment.rejection_reasons
 
 
+def test_buy_with_existing_position_rejected() -> None:
+    assessment = RiskCalculator(RiskPolicy()).assess(
+        _inputs(position_quantity=Decimal("10"))
+    )
+    assert assessment.approved is False
+    assert any("position already open" in r for r in assessment.rejection_reasons)
+
+
+def test_buy_with_existing_position_allowed_by_policy() -> None:
+    policy = RiskPolicy(allow_add_to_position=True)
+    assessment = RiskCalculator(policy).assess(
+        _inputs(position_quantity=Decimal("10"))
+    )
+    assert assessment.approved is True
+    assert assessment.rejection_reasons == []
+
+
+def test_sell_with_position_approved() -> None:
+    assessment = RiskCalculator(RiskPolicy()).assess(
+        _inputs(decision=Decision.SELL, position_quantity=Decimal("10"))
+    )
+    assert assessment.approved is True
+    assert assessment.position_size == Decimal("10")
+
+
 def test_max_positions_rejected() -> None:
     policy = RiskPolicy(max_positions=5)
     assessment = RiskCalculator(policy).assess(_inputs(open_positions=5))

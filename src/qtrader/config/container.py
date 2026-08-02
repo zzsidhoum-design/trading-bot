@@ -308,6 +308,7 @@ class Container:
             max_trades_per_day=self._settings.max_trades_per_day,
             atr_stop_mult=self._settings.atr_stop_mult,
             take_profit_r_mult=self._settings.take_profit_r_mult,
+            allow_add_to_position=self._settings.risk_allow_add_to_position,
         )
         risk_calculator = RiskCalculator(risk_policy)
         c.register(RiskCalculator, instance=risk_calculator)

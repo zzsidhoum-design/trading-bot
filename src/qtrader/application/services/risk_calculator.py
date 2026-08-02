@@ -29,6 +29,7 @@ class RiskPolicy:
     max_trades_per_day: int = 10
     atr_stop_mult: float = 1.5
     take_profit_r_mult: float = 2.0
+    allow_add_to_position: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +88,15 @@ class RiskCalculator:
                 position_size = Decimal(inputs.position_quantity)
                 if inputs.position_stop:
                     stop_loss = _dec(inputs.position_stop)
+
+        # BUY = open a new position only: never re-buy a symbol we already hold
+        # unless the policy explicitly allows adding to a position.
+        if (
+            inputs.decision is Decision.BUY
+            and inputs.position_quantity
+            and not self._policy.allow_add_to_position
+        ):
+            reasons.append(f"position already open for {inputs.symbol}")
 
         if inputs.open_positions >= self._policy.max_positions:
             reasons.append(

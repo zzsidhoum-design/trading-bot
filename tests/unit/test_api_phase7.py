@@ -283,12 +283,26 @@ async def test_portfolio_orders_submit(client: httpx.AsyncClient) -> None:
     resp = await client.post(
         "/api/v1/portfolio/orders",
         headers={"X-API-Key": API_KEY},
-        json={"symbol": "AAPL", "side": "BUY", "quantity": 10, "order_type": "MARKET"},
+        json={"symbol": "AAPL", "side": "SELL", "quantity": 10, "order_type": "MARKET"},
     )
     assert resp.status_code == 201
     body = resp.json()
     assert body["symbol"] == "AAPL"
     assert body["status"] == "PENDING"
+
+
+@pytest.mark.asyncio
+async def test_portfolio_orders_submit_rejects_duplicate_buy(
+    client: httpx.AsyncClient,
+) -> None:
+    resp = await client.post(
+        "/api/v1/portfolio/orders",
+        headers={"X-API-Key": API_KEY},
+        json={"symbol": "AAPL", "side": "BUY", "quantity": 10, "order_type": "MARKET"},
+    )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert "position already open" in body["detail"]
 
 
 @pytest.mark.asyncio

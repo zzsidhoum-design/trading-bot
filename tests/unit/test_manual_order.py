@@ -29,6 +29,7 @@ from tests.unit.fakes_phase7 import (
     FakeStockRepository,
     FakeTradeRepository,
     bar,
+    make_position,
     money,
 )
 
@@ -46,6 +47,7 @@ def _build(
     *,
     mode: TradingMode = TradingMode.PAPER,
     permissive: bool = True,
+    positions: list | None = None,
 ) -> tuple[ManualOrder, FakeOrderRepository, FakeBrokerGateway, FakePortfolioRepository]:
     portfolio = Portfolio(
         name="default",
@@ -63,7 +65,7 @@ def _build(
         bar("AAPL", datetime(2026, 8, 1, tzinfo=UTC), "99", "101", "98", "100")
     )
     indicators = FakeIndicatorRepository()
-    positions = FakePositionRepository()
+    positions = FakePositionRepository(positions or [])
     orders = FakeOrderRepository()
     trades = FakeTradeRepository()
     bus = FakeEventBus()
@@ -115,6 +117,19 @@ async def test_submit_rejects_when_risk_gate_blocks() -> None:
         await manual.submit(
             ManualOrderRequest(symbol="AAPL", side="BUY", quantity=10)
         )
+    assert orders.orders == []
+    assert broker.submitted == []
+
+
+async def test_submit_buy_rejects_when_already_holding_symbol() -> None:
+    manual, orders, broker, _ = _build(
+        positions=[make_position(symbol="AAPL", quantity=10, avg="100")]
+    )
+    with pytest.raises(OrderRejectedError) as exc:
+        await manual.submit(
+            ManualOrderRequest(symbol="AAPL", side="BUY", quantity=10)
+        )
+    assert any("position already open" in r for r in exc.value.reasons)
     assert orders.orders == []
     assert broker.submitted == []
 

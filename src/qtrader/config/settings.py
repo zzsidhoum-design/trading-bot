@@ -90,6 +90,7 @@ class Settings(BaseSettings):
     max_trades_per_day: int = 10
     atr_stop_mult: float = 1.5
     take_profit_r_mult: float = 2.0
+    risk_allow_add_to_position: bool = False
     allocation_weight_per_trade: float = 0.2
     portfolio_initial_capital: float = 100_000.0
     broker_provider: str = "paper"

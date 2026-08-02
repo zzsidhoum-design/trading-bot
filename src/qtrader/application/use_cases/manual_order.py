@@ -183,9 +183,7 @@ class ManualOrder:
                 cooldown_remaining_minutes=0.0,
                 daily_pnl_pct=0.0,
                 trades_today=0,
-                position_quantity=Decimal(quantity) if side == "BUY" else (
-                    Decimal(existing.quantity) if existing else None
-                ),
+                position_quantity=Decimal(existing.quantity) if existing else None,
                 position_stop=Decimal(stop_loss) if stop_loss else None,
             )
         )
