@@ -264,6 +264,39 @@ class EventRepository(ABC):
     ) -> list[DomainEvent]: ...
 
 
+class BacktestRepository(ABC):
+    """Persistence for backtest runs (``backtest_runs``)."""
+
+    @abstractmethod
+    async def create(self, run: Any) -> Any: ...
+
+    @abstractmethod
+    async def save(self, run: Any) -> Any: ...
+
+    @abstractmethod
+    async def get(self, run_id: int) -> Any | None: ...
+
+    @abstractmethod
+    async def latest(self, name: str | None = None, limit: int = 5) -> list[Any]: ...
+
+
+class PerformanceRepository(ABC):
+    """Aggregate strategy metrics (``strategy_performance``)."""
+
+    @abstractmethod
+    async def upsert(self, summary: Any) -> Any: ...
+
+    @abstractmethod
+    async def latest_for_strategy(self, strategy: str, mode: Any) -> Any | None: ...
+
+
+class SystemLogRepository(ABC):
+    """Audit/journal entries (``system_logs``)."""
+
+    @abstractmethod
+    async def record(self, entry: Any) -> Any: ...
+
+
 # --------------------------------------------------------------------------- #
 # External adapters (defined now to fix contracts; implemented in later phases)
 # --------------------------------------------------------------------------- #

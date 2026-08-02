@@ -295,11 +295,15 @@ Index `(agent_name, metric_name, computed_at DESC)`.
 | id | BIGSERIAL PK |
 | name | VARCHAR(128) |
 | universe | JSONB |
+| interval | VARCHAR(8) | `1d`/`5m`/`1h` (default `1d`) |
+| strategy | VARCHAR(64) | strategy under test (default `ensemble`) |
 | start / end | DATE |
 | initial_capital | NUMERIC(20,2) |
+| commission_bps | NUMERIC(10,4) | commission assumption per fill |
+| slippage_bps | NUMERIC(10,4) | slippage assumption vs fill open |
 | final_capital | NUMERIC(20,2) |
-| metrics | JSONB |
-| status | VARCHAR(16) |
+| metrics | JSONB | Sharpe, Sortino, max DD, win rate, profit factor … |
+| status | VARCHAR(16) | running/completed/failed |
 | created_at | TIMESTAMPTZ |
 
 ### `events` — outbox / audit journal

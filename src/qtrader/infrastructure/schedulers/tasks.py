@@ -201,6 +201,49 @@ async def train_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -> 
     )
 
 
+async def backtest_cycle(ctx: dict[str, Any]) -> str:
+    """Phase 6: replay stored history, persist results, evaluate SystemGate."""
+    from datetime import date
+    from decimal import Decimal
+
+    from qtrader.application.services.backtest import BacktestParams, BacktestRunner
+    from qtrader.application.services.system_gate import SystemGate
+    from qtrader.config.container import get_container
+    from qtrader.domain.value_objects import Interval, TradingMode
+
+    container = get_container()
+    settings = container.resolve(Settings)
+    if settings.backtest_universe:
+        symbols = [s.strip().upper() for s in settings.backtest_universe.split(",") if s.strip()]
+    else:
+        symbols = settings.watchlist_symbols
+    end = date.today()
+    start = end - timedelta(days=settings.backtest_lookback_days)
+    result = await container.resolve(BacktestRunner).run(
+        name=f"auto-{end.isoformat()}",
+        symbols=symbols,
+        start=start,
+        end=end,
+        initial_capital=Decimal(str(settings.portfolio_initial_capital)),
+        params=BacktestParams(
+            interval=Interval(settings.backtest_interval),
+            strategy=settings.gate_strategy,
+            commission_bps=settings.backtest_commission_bps,
+            slippage_bps=settings.backtest_slippage_bps,
+            warmup_bars=settings.backtest_warmup_bars,
+        ),
+    )
+    decision = await container.resolve(SystemGate).evaluate(
+        settings.gate_strategy, TradingMode.PAPER
+    )
+    summary = result.summary
+    return (
+        f"backtest: {summary.trades_count} trades, "
+        f"return={summary.total_return} sharpe={summary.sharpe} "
+        f"gate={decision.status.value}"
+    )
+
+
 class WorkerSettings:
     functions = [
         heartbeat,
@@ -212,6 +255,7 @@ class WorkerSettings:
         risk_cycle,
         execute_cycle,
         train_cycle,
+        backtest_cycle,
     ]
 
     cron_jobs = [
@@ -223,6 +267,7 @@ class WorkerSettings:
         cron(risk_cycle, name="risk_cycle", minute={7, 22, 37, 52}),
         cron(execute_cycle, name="execute_cycle", minute={8, 23, 38, 53}),
         cron(train_cycle, name="train_cycle", hour={2}, minute=0),
+        cron(backtest_cycle, name="backtest_cycle", hour={3}, minute=0),
     ]
 
     redis_settings = RedisSettings.from_dsn(Settings().redis_url)

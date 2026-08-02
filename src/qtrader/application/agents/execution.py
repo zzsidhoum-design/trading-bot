@@ -19,6 +19,7 @@ import structlog
 
 from qtrader.application.agents.base import AgentBase, AgentContext
 from qtrader.application.services.portfolio_service import PortfolioService
+from qtrader.application.services.system_gate import SystemGate
 from qtrader.domain.entities import Order, Position, Stock, Trade
 from qtrader.domain.events import (
     AllocationProposal,
@@ -69,6 +70,8 @@ class ExecutionAgent(AgentBase):
         stocks: StockRepository,
         trades: TradeRepository,
         bus: EventBus,
+        gate: SystemGate | None = None,
+        gate_strategy: str = "ensemble",
     ) -> None:
         self._broker = broker
         self._portfolios = portfolio_service
@@ -78,6 +81,8 @@ class ExecutionAgent(AgentBase):
         self._stocks = stocks
         self._trades = trades
         self._bus = bus
+        self._gate = gate
+        self._gate_strategy = gate_strategy
 
     async def execute(self, proposal: AllocationProposal) -> str | None:
         order = await self._resolve_order(proposal)
@@ -87,6 +92,26 @@ class ExecutionAgent(AgentBase):
 
     async def execute_order(self, order: Order) -> str | None:
         if not order.is_open:
+            return None
+
+        if self._gate is not None and not await self._gate.can_trade(
+            self._gate_strategy, order.mode
+        ):
+            logger.warning(
+                "execution.gate_denied",
+                symbol=order.symbol,
+                mode=order.mode.value,
+                strategy=self._gate_strategy,
+            )
+            denied = replace(order, status=OrderStatus.REJECTED)
+            await self._orders.save(denied)
+            await self._bus.publish(
+                OrderStatusChanged(
+                    order_id=str(denied.order_id),
+                    status=OrderStatus.REJECTED,
+                    detail=f"SystemGate denied {order.mode.value} trading",
+                )
+            )
             return None
 
         try:

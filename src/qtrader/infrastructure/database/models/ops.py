@@ -79,10 +79,18 @@ class BacktestRunModel(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
-    universe: Mapped[dict | None] = mapped_column(JSONB)
+    universe: Mapped[list[str] | None] = mapped_column(JSONB)
     start: Mapped[date] = mapped_column(Date, nullable=False)
     end: Mapped[date] = mapped_column(Date, nullable=False)
     initial_capital: Mapped[Decimal] = mapped_column(Numeric(20, 2), nullable=False)
+    interval: Mapped[str] = mapped_column(String(8), default="1d", nullable=False)
+    strategy: Mapped[str] = mapped_column(String(64), default="ensemble", nullable=False)
+    commission_bps: Mapped[Decimal] = mapped_column(
+        Numeric(10, 4), default=Decimal("0"), nullable=False
+    )
+    slippage_bps: Mapped[Decimal] = mapped_column(
+        Numeric(10, 4), default=Decimal("0"), nullable=False
+    )
     final_capital: Mapped[Decimal | None] = mapped_column(Numeric(20, 2))
     metrics: Mapped[dict | None] = mapped_column(JSONB)
     status: Mapped[str] = mapped_column(String(16), default="pending")

@@ -299,3 +299,53 @@ class Trade:
     mode: TradingMode = TradingMode.BACKTEST
     position_id: int | None = None
     trade_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PerformanceSummary:
+    """Aggregate risk/return metrics for one (strategy, mode, period)."""
+
+    strategy: str
+    mode: TradingMode
+    period_start: date
+    period_end: date
+    total_return: Decimal | None = None
+    sharpe: Decimal | None = None
+    sortino: Decimal | None = None
+    max_drawdown: Decimal | None = None
+    win_rate: Decimal | None = None
+    profit_factor: Decimal | None = None
+    trades_count: int | None = None
+    final_equity: Decimal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestRun:
+    """One backtest execution (``backtest_runs`` row)."""
+
+    name: str
+    universe: list[str]
+    start: date
+    end: date
+    initial_capital: Money
+    interval: Interval = Interval.D1
+    strategy: str = "ensemble"
+    commission_bps: Decimal = Decimal("0.0")
+    slippage_bps: Decimal = Decimal("0.0")
+    final_capital: Money | None = None
+    metrics: PerformanceSummary | None = None
+    status: str = "pending"
+    created_at: datetime = field(default_factory=_now)
+    run_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SystemLog:
+    """An auditable system/journal entry (``system_logs`` row)."""
+
+    level: str
+    message: str
+    component: str | None = None
+    context: dict = field(default_factory=dict)
+    created_at: datetime = field(default_factory=_now)
+    log_id: int | None = None

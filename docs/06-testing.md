@@ -20,11 +20,13 @@
 
 ## 2. Backtesting Engine
 
-- Replays stored historical bars through the **same agent pipeline** (Data→Scan→Analyze→Predict→Decide→Risk→Allocate→Execute) — the only difference is the `BacktestBroker`, which fills orders at the next bar's OHLC (configurable: open/next-open/slippage model + commission).
-- Deterministic: fixed seed, same input → same run (stored in `backtest_runs`).
-- No look-ahead: indicators/predictions computed only on data up to bar *t*; a point-in-time test guards this.
-- Slippage & costs modeled explicitly (bases, commission, borrow for shorts).
-- Outputs: equity curve, trade list, and `strategy_performance` metrics (Sharpe, Sortino, max drawdown, win rate, profit factor) — the basis for the graduation gate.
+- `BacktestRunner` replays stored historical bars (via `PriceRepository.history`) through the **production analysis code**: the same `IndicatorEngine` signals and `RiskCalculator` sizing used live — no special-casing in the strategy.
+- Deterministic: bars are processed in timestamp order with no randomness; same input → same run (`backtest_runs`). A determinism test replays the same history twice and asserts identical results.
+- No look-ahead: `_SignalEngine` computes EMA/RSI only on bars up to and including bar *t* (warm-up of `warmup_bars`); stops/limits are checked against the same bar's OHLC range.
+- Fills happen at the **next bar's open** via `BacktestBroker`, with explicit `slippage_bps` (applied against the open) and `commission_bps` (on fill notional). Intrabar exits prefer the stop when both stop and take-profit are touched.
+- Outputs: equity curve, trade list (with outcome `signal`/`stop`/`take_profit`/`end_of_test`), and `strategy_performance` metrics (Sharpe, Sortino, max drawdown, win rate, profit factor) computed by `PerformanceMetrics.from_series` — the basis for the graduation gate.
+- Each run persists a `backtest_runs` row (status, final capital, metrics JSONB) and upserts the `strategy_performance` row under `(strategy, mode, period_start, period_end)`.
+- Scheduled nightly as the `backtest_cycle` arq job (defaults in `Settings`: `backtest_interval`, `backtest_universe`, `backtest_lookback_days`, commission/slippage, warmup).
 
 ## 3. Paper Trading Mode
 
@@ -42,17 +44,17 @@ backtest ──passes review──► paper ──meets graduation criteria─�
    └────────────────────── failures revert ──────────────────────┘
 ```
 
-`SystemGate.graduated_to_live()` checks, and refuses otherwise:
+`SystemGate.evaluate(strategy, mode)` returns `GateDecision`:
 
-1. Latest CI run green (tests + coverage thresholds).
-2. ≥ N backtest runs on out-of-sample windows with metrics above configured floors (Sharpe ≥ X, max DD ≤ Y).
-3. ≥ M weeks of paper trading with live-feel data and tracked metrics above floors.
-4. Risk policy validated (all limits parse, invariant checks pass at startup).
-5. `ENABLE_LIVE_TRADING=true` explicitly set and `QTRADER_MODE=live` — both required, or the app refuses to start execution.
+- `BACKTEST` mode is always `GRADUATED` (nothing to gate).
+- `PAPER`/`LIVE` pull the latest `BACKTEST` `strategy_performance` row for the strategy and require it to clear every configured floor: `min_trades`, `min_win_rate`, `min_profit_factor`, `min_sharpe`, `max_drawdown`, `min_total_return`. Any failure is collected as a human-readable reason and the decision is `DENIED`.
 
-Every transition is recorded (who/when/evidence) in `system_logs`. The Execution Agent reads mode from `SystemGate` at order time, not from process env alone, so a hot-swap without the gate is impossible.
+`ExecutionAgent` consults the gate at order time (`can_trade`); a denial turns the order into a `REJECTED` `OrderStatusChanged` event instead of reaching the broker, so a hot-swap without the gate is impossible. Every decision is recorded in `system_logs` (INFO approved / WARN denied) with the evidence.
 
 ## 5. CI Pipeline (GitHub Actions)
 
-- `lint` — ruff; `type` — mypy; `test-unit`; `test-integration` (compose: postgres+redis); `test-e2e` (compose full stack, backtest smoke run).
-- A merge into `main` requires all green → the auto-generated `graduation` status in the dashboard reflects it.
+`.github/workflows/ci.yml` runs on push to `main` and pull requests:
+
+- `lint & typecheck` — `ruff check src tests` and `mypy src`.
+- `unit tests` — `pytest -m "not integration and not e2e" --cov=qtrader --cov-report=term-missing`, enforcing the coverage gate (≥ 90% on `application/`/`domain/`, ≥ 70% overall).
+- Integration/e2e suites (marked `integration`/`e2e`) run against Docker Compose (postgres+redis) with `QTRADER_RUN_INTEGRATION=1`, either in CI with services or locally.

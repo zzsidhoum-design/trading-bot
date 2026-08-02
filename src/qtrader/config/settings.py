@@ -93,6 +93,21 @@ class Settings(BaseSettings):
     portfolio_initial_capital: float = 100_000.0
     broker_provider: str = "paper"
 
+    # Phase 6 — backtesting & SystemGate graduation
+    backtest_interval: str = "1d"
+    backtest_universe: str = ""
+    backtest_lookback_days: int = 180
+    backtest_commission_bps: float = 1.0
+    backtest_slippage_bps: float = 0.0
+    backtest_warmup_bars: int = 30
+    gate_strategy: str = "ensemble"
+    gate_min_trades: int = 30
+    gate_min_win_rate: float = 0.50
+    gate_min_profit_factor: float = 1.2
+    gate_min_sharpe: float = 1.0
+    gate_max_drawdown: float = 0.25
+    gate_min_total_return: float = 0.0
+
     @field_validator("postgres_port")
     @classmethod
     def _port_range(cls, value: int) -> int:

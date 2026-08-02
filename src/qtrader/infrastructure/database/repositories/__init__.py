@@ -7,6 +7,11 @@ from qtrader.infrastructure.database.repositories.analysis import (
     SQLAlchemySignalRepository,
 )
 from qtrader.infrastructure.database.repositories.event_outbox import SQLAlchemyEventRepository
+from qtrader.infrastructure.database.repositories.ops import (
+    SQLAlchemyBacktestRepository,
+    SQLAlchemyPerformanceRepository,
+    SQLAlchemySystemLogRepository,
+)
 from qtrader.infrastructure.database.repositories.prediction import (
     SQLAlchemyDecisionRepository,
     SQLAlchemyModelRepository,
@@ -25,6 +30,7 @@ from qtrader.infrastructure.database.repositories.trading import (
 )
 
 __all__ = [
+    "SQLAlchemyBacktestRepository",
     "SQLAlchemyDecisionRepository",
     "SQLAlchemyEventRepository",
     "SQLAlchemyFundamentalRepository",
@@ -32,6 +38,7 @@ __all__ = [
     "SQLAlchemyModelRepository",
     "SQLAlchemyNewsRepository",
     "SQLAlchemyOrderRepository",
+    "SQLAlchemyPerformanceRepository",
     "SQLAlchemyPortfolioRepository",
     "SQLAlchemyPositionRepository",
     "SQLAlchemyPredictionRepository",
@@ -39,5 +46,6 @@ __all__ = [
     "SQLAlchemyRiskRepository",
     "SQLAlchemySignalRepository",
     "SQLAlchemyStockRepository",
+    "SQLAlchemySystemLogRepository",
     "SQLAlchemyTradeRepository",
 ]

@@ -129,7 +129,7 @@ class VWAP(Indicator):
         typical = (df["high"] + df["low"] + df["close"]) / 3
         vol = df["volume"]
         cum_vol = vol.cumsum()
-        vwap = (typical * vol).cumsum() / cum_vol.replace(0, pd.NA)
+        vwap = (typical * vol).cumsum() / cum_vol.where(cum_vol != 0)
         return pd.DataFrame({"vwap": vwap})
 
 
@@ -167,9 +167,10 @@ class ADX(Indicator):
         tr = ATR.true_range(df)
         alpha = 1 / self.period
         atr_s = tr.ewm(alpha=alpha, adjust=False, min_periods=self.period).mean()
-        plus_di = 100 * self._smooth(plus_dm) / atr_s.replace(0, pd.NA)
-        minus_di = 100 * self._smooth(minus_dm) / atr_s.replace(0, pd.NA)
-        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, pd.NA)
+        plus_di = 100 * self._smooth(plus_dm) / atr_s.where(atr_s != 0)
+        minus_di = 100 * self._smooth(minus_dm) / atr_s.where(atr_s != 0)
+        di_sum = plus_di + minus_di
+        dx = 100 * (plus_di - minus_di).abs() / di_sum.where(di_sum != 0)
         adx = dx.ewm(alpha=alpha, adjust=False, min_periods=self.period).mean()
         return pd.DataFrame({"adx": adx})
 
@@ -188,7 +189,7 @@ class Stochastic(Indicator):
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         low_min = df["low"].rolling(self.k_period).min()
         high_max = df["high"].rolling(self.k_period).max()
-        rng = (high_max - low_min).replace(0, pd.NA)
+        rng = (high_max - low_min).where(high_max != low_min)
         k = 100 * (df["close"] - low_min) / rng
         d = k.rolling(self.d_period).mean()
         return pd.DataFrame({"stoch_k": k, "stoch_d": d})

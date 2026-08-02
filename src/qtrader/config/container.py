@@ -25,6 +25,7 @@ from qtrader.application.agents.risk import RiskAgent
 from qtrader.application.agents.scanner import MarketScanner
 from qtrader.application.agents.technical import TechnicalAgent
 from qtrader.application.services.allocation_policy import EqualWeightAllocation
+from qtrader.application.services.backtest import BacktestRunner
 from qtrader.application.services.bar_cleaner import BarCleaner
 from qtrader.application.services.decision_strategy import EnsembleDecisionStrategy
 from qtrader.application.services.feature_store import FeatureStore
@@ -32,6 +33,7 @@ from qtrader.application.services.indicators import IndicatorEngine
 from qtrader.application.services.model_trainer import ModelTrainer
 from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskPolicy
+from qtrader.application.services.system_gate import GateThresholds, SystemGate
 from qtrader.config.settings import Settings
 from qtrader.domain.events import (
     AllocationProposal,
@@ -42,6 +44,7 @@ from qtrader.domain.events import (
 )
 from qtrader.domain.ports import (
     AllocationPolicy,
+    BacktestRepository,
     BrokerGateway,
     Cache,
     DecisionRepository,
@@ -58,6 +61,7 @@ from qtrader.domain.ports import (
     NewsProvider,
     NewsRepository,
     OrderRepository,
+    PerformanceRepository,
     PortfolioRepository,
     PositionRepository,
     PredictionRepository,
@@ -65,6 +69,7 @@ from qtrader.domain.ports import (
     RiskRepository,
     SignalRepository,
     StockRepository,
+    SystemLogRepository,
     TradeRepository,
 )
 from qtrader.domain.value_objects import Money, TradingMode
@@ -73,6 +78,7 @@ from qtrader.infrastructure.cache import RedisCache, RedisLock
 from qtrader.infrastructure.data_providers.fundamental import StubFundamentalProvider
 from qtrader.infrastructure.data_providers.yahoo import YahooFinanceProvider
 from qtrader.infrastructure.database.repositories import (
+    SQLAlchemyBacktestRepository,
     SQLAlchemyDecisionRepository,
     SQLAlchemyEventRepository,
     SQLAlchemyFundamentalRepository,
@@ -80,6 +86,7 @@ from qtrader.infrastructure.database.repositories import (
     SQLAlchemyModelRepository,
     SQLAlchemyNewsRepository,
     SQLAlchemyOrderRepository,
+    SQLAlchemyPerformanceRepository,
     SQLAlchemyPortfolioRepository,
     SQLAlchemyPositionRepository,
     SQLAlchemyPredictionRepository,
@@ -87,6 +94,7 @@ from qtrader.infrastructure.database.repositories import (
     SQLAlchemyRiskRepository,
     SQLAlchemySignalRepository,
     SQLAlchemyStockRepository,
+    SQLAlchemySystemLogRepository,
     SQLAlchemyTradeRepository,
 )
 from qtrader.infrastructure.database.session import build_engine, build_session_factory
@@ -141,6 +149,10 @@ class Container:
         c.register(PredictionRepository, instance=SQLAlchemyPredictionRepository(session_factory))
         c.register(DecisionRepository, instance=SQLAlchemyDecisionRepository(session_factory))
         c.register(ModelRepository, instance=SQLAlchemyModelRepository(session_factory))
+
+        c.register(BacktestRepository, instance=SQLAlchemyBacktestRepository(session_factory))
+        c.register(PerformanceRepository, instance=SQLAlchemyPerformanceRepository(session_factory))
+        c.register(SystemLogRepository, instance=SQLAlchemySystemLogRepository(session_factory))
 
         c.register(FundamentalProvider, instance=StubFundamentalProvider())
 
@@ -287,6 +299,30 @@ class Container:
         risk_calculator = RiskCalculator(risk_policy)
         c.register(RiskCalculator, instance=risk_calculator)
 
+        system_gate = SystemGate(
+            thresholds=GateThresholds(
+                min_trades=self._settings.gate_min_trades,
+                min_win_rate=self._settings.gate_min_win_rate,
+                min_profit_factor=self._settings.gate_min_profit_factor,
+                min_sharpe=self._settings.gate_min_sharpe,
+                max_drawdown=self._settings.gate_max_drawdown,
+                min_total_return=self._settings.gate_min_total_return,
+            ),
+            performance=c.resolve(PerformanceRepository),
+            logs=c.resolve(SystemLogRepository),
+        )
+        c.register(SystemGate, instance=system_gate)
+
+        backtest_runner = BacktestRunner(
+            prices=c.resolve(PriceRepository),
+            backtests=c.resolve(BacktestRepository),
+            performance=c.resolve(PerformanceRepository),
+            risk_calculator=risk_calculator,
+            indicator_engine=IndicatorEngine(),
+            logs=c.resolve(SystemLogRepository),
+        )
+        c.register(BacktestRunner, instance=backtest_runner)
+
         broker: BrokerGateway
         if self._settings.broker_provider == "alpaca":
             broker = AlpacaBroker(
@@ -333,6 +369,8 @@ class Container:
             stocks=c.resolve(StockRepository),
             trades=c.resolve(TradeRepository),
             bus=bus,
+            gate=system_gate,
+            gate_strategy=self._settings.gate_strategy,
         )
         c.register(ExecutionAgent, instance=execution_agent)
 
