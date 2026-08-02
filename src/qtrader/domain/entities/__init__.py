@@ -63,6 +63,7 @@ class Position:
     realized_pnl: Money | None = None
     opened_at: datetime = field(default_factory=_now)
     closed_at: datetime | None = None
+    symbol: str | None = None
     position_id: int | None = None
 
 
@@ -77,6 +78,8 @@ class Order:
     idempotency_key: str
     limit_price: Money | None = None
     stop_price: Money | None = None
+    stop_loss: Money | None = None
+    take_profit: Money | None = None
     status: OrderStatus = OrderStatus.PENDING
     broker_order_id: str | None = None
     filled_qty: int = 0
@@ -85,6 +88,7 @@ class Order:
     decision_ref: str | None = None
     reason: dict | None = None
     created_at: datetime = field(default_factory=_now)
+    symbol: str | None = None
     order_id: int | None = None
 
     @property
@@ -250,3 +254,48 @@ class DecisionOutcome:
     confidence: float
     rationale: str
     agent_scores: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class RiskAssessment:
+    """Persisted result of one risk-gate evaluation (risk_history row)."""
+
+    decision_uuid: str
+    symbol: str
+    approved: bool
+    rejection_reasons: list[str] = field(default_factory=list)
+    position_size: Decimal | None = None
+    stop_loss: Decimal | None = None
+    take_profit: Decimal | None = None
+    risk_per_trade_pct: Decimal | None = None
+    exposure_pct: Decimal | None = None
+    max_daily_loss_pct: Decimal | None = None
+    daily_pnl_pct: Decimal | None = None
+    metadata: dict = field(default_factory=dict)
+    portfolio_id: int | None = None
+    created_at: datetime = field(default_factory=_now)
+    risk_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Trade:
+    """A closed P/L record (Memory System core row in ``trades``)."""
+
+    portfolio_id: int
+    stock_id: int
+    symbol: str | None = None
+    strategy: str = "default"
+    side: TradeSide = TradeSide.BUY
+    quantity: Decimal = Decimal(0)
+    entry_price: Decimal = Decimal(0)
+    exit_price: Decimal = Decimal(0)
+    pnl: Decimal | None = None
+    pnl_pct: Decimal | None = None
+    fees: Decimal = Decimal(0)
+    entry_time: datetime = field(default_factory=_now)
+    exit_time: datetime = field(default_factory=_now)
+    decision_reason: dict | None = None
+    outcome: str | None = None
+    mode: TradingMode = TradingMode.BACKTEST
+    position_id: int | None = None
+    trade_id: int | None = None

@@ -13,7 +13,7 @@ every concrete event inherits *after* its own fields, keeping the generated
 from __future__ import annotations
 
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -229,7 +229,22 @@ class RiskApproved(DomainEvent, EventMeta):
     plan: OrderPlan
 
     def payload(self) -> dict[str, Any]:
-        return {"decision_uuid": self.decision_uuid, "plan": asdict(self.plan)}
+        p = self.plan
+        return {
+            "decision_uuid": self.decision_uuid,
+            "plan": {
+                "symbol": p.symbol,
+                "side": p.side,
+                "quantity": str(p.quantity),
+                "order_type": p.order_type,
+                "limit_price": str(p.limit_price) if p.limit_price is not None else None,
+                "stop_loss": str(p.stop_loss),
+                "take_profit": str(p.take_profit),
+                "risk_per_trade": str(p.risk_per_trade.value),
+                "estimated_exposure": str(p.estimated_exposure.value),
+                "entry_price": str(p.entry_price),
+            },
+        }
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -245,6 +260,34 @@ class RiskRejected(DomainEvent, EventMeta):
 # --------------------------------------------------------------------------- #
 # Execution
 # --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AllocationProposal(DomainEvent, EventMeta):
+    """Portfolio Agent → Execution Agent: a risk-approved order to submit."""
+
+    decision_uuid: str
+    order_id: str
+    symbol: str
+    side: TradeSide
+    quantity: str
+    order_type: str
+    mode: TradingMode
+    stop_loss: str | None = None
+    take_profit: str | None = None
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "decision_uuid": self.decision_uuid,
+            "order_id": self.order_id,
+            "symbol": self.symbol,
+            "side": self.side,
+            "quantity": self.quantity,
+            "order_type": self.order_type,
+            "mode": self.mode,
+            "stop_loss": self.stop_loss,
+            "take_profit": self.take_profit,
+        }
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

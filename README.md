@@ -2,7 +2,7 @@
 
 Professional, scalable, event-driven trading platform. Python 3.12+, Clean Architecture, SOLID, async everywhere.
 
-> **Status: PHASE 1, 2, 3 & 4 COMPLETE** — foundation, DB, API, worker and seven agents (Data, Scanner, Technical, News, Fundamental, Prediction, Chief) are implemented and verified against the live container stack (`docker compose`). Prediction (ML probability-of-movement with a versioned model registry) and Chief (explainable BUY/SELL/HOLD decisions) were verified end-to-end in the live stack, including training + promotion and prediction with the active model. See the Roadmap for what remains (Risk, Portfolio, Execution).
+> **Status: PHASES 1–5 COMPLETE** — foundation, DB, API, worker and ten agents (Data, Scanner, Technical, News, Fundamental, Prediction, Chief, Risk, Portfolio, Execution) are implemented and verified against the live container stack (`docker compose`). The full order lifecycle was verified end-to-end in the live stack: Chief → Risk (ATR-sized plans, bracket stops) → Portfolio (allocation) → Execution (paper fills, positions, trades, cash accounting). Prediction (ML probability-of-movement with a versioned model registry) and Chief (explainable BUY/SELL/HOLD decisions) were likewise verified live, including training + promotion. See the Roadmap for what remains (backtesting, dashboard, hardening).
 
 ## Capabilities
 
@@ -63,7 +63,7 @@ scripts/         dev/ops helpers
 2. **Data + Scanner** — providers (Yahoo), Data Agent, cleaning, Market Scanner, Redis rankings. ✅ *(complete)*
 3. **Analysis agents** — Technical, News (LLM), Fundamental + their signal tables. ✅ *(complete)*
 4. **Prediction + Chief** — FeatureStore, model training/inference, ensemble decision engine. ✅ *(complete)*
-5. **Risk + Portfolio + Execution** — RiskCalculator, allocation policies, broker adapters (Paper/Alpaca), Memory System wiring.
+5. **Risk + Portfolio + Execution** — RiskCalculator, allocation policies, broker adapters (Paper/Alpaca), Memory System wiring. ✅ *(complete)*
 6. **Backtesting + graduation gate** — replay engine, paper mode, SystemGate, CI pipeline.
 7. **API + Dashboard** — FastAPI routes, WebSocket hub, web UI.
 8. **Hardening** — load test, fault injection, sharding, docs review.

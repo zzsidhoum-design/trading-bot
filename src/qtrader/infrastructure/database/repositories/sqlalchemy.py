@@ -139,6 +139,21 @@ class SQLAlchemyPortfolioRepository(PortfolioRepository):
                 portfolio_id=row.id,
             )
 
+    async def save(self, portfolio: Portfolio) -> Portfolio:
+        assert portfolio.portfolio_id is not None
+        async with self._session_factory() as session:
+            row = await session.get(PortfolioModel, portfolio.portfolio_id)
+            if row is None:
+                raise ValueError(f"portfolio {portfolio.portfolio_id} not found")
+            row.name = portfolio.name
+            row.currency = portfolio.currency
+            row.initial_capital = portfolio.initial_capital.amount
+            row.current_cash = portfolio.current_cash.amount
+            row.mode = portfolio.mode
+            row.status = portfolio.status
+            await session.commit()
+            return portfolio
+
 
 class SQLAlchemyPriceRepository(PriceRepository):
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:

@@ -78,6 +78,21 @@ class Settings(BaseSettings):
     decision_conflict_threshold: float = 0.5
     decision_min_coverage: float = 0.5
 
+    # Phase 5 — risk, portfolio & execution
+    risk_per_trade_pct: float = 0.01
+    max_daily_loss_pct: float = 0.03
+    max_portfolio_exposure_pct: float = 0.8
+    max_positions: int = 10
+    per_sector_limit_pct: float = 0.4
+    max_position_pct_adv: float = 0.01
+    min_cooldown_minutes: int = 5
+    max_trades_per_day: int = 10
+    atr_stop_mult: float = 1.5
+    take_profit_r_mult: float = 2.0
+    allocation_weight_per_trade: float = 0.2
+    portfolio_initial_capital: float = 100_000.0
+    broker_provider: str = "paper"
+
     @field_validator("postgres_port")
     @classmethod
     def _port_range(cls, value: int) -> int:

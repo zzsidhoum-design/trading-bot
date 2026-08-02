@@ -174,13 +174,12 @@ class MarketScanner(AgentBase):
             ("atr_pct", "volatility"),
             ("momentum_pct", "momentum"),
         ):
-            await self._cache.zadd(
-                f"{SCAN_ZSET_PREFIX}:{key}",
-                {c.symbol: getattr(c, metric) for c in candidates},
-            )
-        await self._cache.zadd(
-            f"{SCAN_ZSET_PREFIX}:overall", {c.symbol: c.score for c in candidates}
-        )
+            mapping = {c.symbol: getattr(c, metric) for c in candidates}
+            if mapping:
+                await self._cache.zadd(f"{SCAN_ZSET_PREFIX}:{key}", mapping)
+        overall = {c.symbol: c.score for c in candidates}
+        if overall:
+            await self._cache.zadd(f"{SCAN_ZSET_PREFIX}:overall", overall)
 
     async def on_event(self, event: DomainEvent) -> None:
         if isinstance(event, BackfillCompleted):

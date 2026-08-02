@@ -17,6 +17,12 @@ from qtrader.infrastructure.database.repositories.sqlalchemy import (
     SQLAlchemyPriceRepository,
     SQLAlchemyStockRepository,
 )
+from qtrader.infrastructure.database.repositories.trading import (
+    SQLAlchemyOrderRepository,
+    SQLAlchemyPositionRepository,
+    SQLAlchemyRiskRepository,
+    SQLAlchemyTradeRepository,
+)
 
 __all__ = [
     "SQLAlchemyDecisionRepository",
@@ -25,9 +31,13 @@ __all__ = [
     "SQLAlchemyIndicatorRepository",
     "SQLAlchemyModelRepository",
     "SQLAlchemyNewsRepository",
+    "SQLAlchemyOrderRepository",
     "SQLAlchemyPortfolioRepository",
+    "SQLAlchemyPositionRepository",
     "SQLAlchemyPredictionRepository",
     "SQLAlchemyPriceRepository",
+    "SQLAlchemyRiskRepository",
     "SQLAlchemySignalRepository",
     "SQLAlchemyStockRepository",
+    "SQLAlchemyTradeRepository",
 ]

@@ -117,6 +117,64 @@ async def decide_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) ->
     return f"decided {decided}/{len(symbols)} symbols"
 
 
+async def risk_cycle(ctx: dict[str, Any]) -> str:
+    """Phase 5 risk gate: re-assess the latest decision for each candidate."""
+    from qtrader.application.agents.risk import RiskAgent
+    from qtrader.application.agents.scanner import MarketScanner
+    from qtrader.config.container import get_container
+    from qtrader.domain.events import DecisionMade
+    from qtrader.domain.ports import DecisionRepository
+    from qtrader.domain.value_objects import Decision
+
+    container = get_container()
+    scanner = container.resolve(MarketScanner)
+    decisions = container.resolve(DecisionRepository)
+    top = await scanner.scan_all()
+    approved = rejected = 0
+    for candidate in top:
+        symbol = candidate.symbol
+        latest = await decisions.latest_for_symbol(symbol, limit=1)
+        if not latest or latest[0].decision is Decision.HOLD:
+            continue
+        record = latest[0]
+        assessment = await container.resolve(RiskAgent).assess_symbol(
+            DecisionMade(
+                decision_uuid=record.decision_uuid,
+                symbol=symbol,
+                decision=record.decision,
+                confidence=float(record.confidence or 0),
+                rationale=record.rationale or "",
+                agent_scores=record.agent_scores,
+            )
+        )
+        if assessment.approved:
+            approved += 1
+        else:
+            rejected += 1
+    return f"risk gate: approved={approved} rejected={rejected}"
+
+
+async def execute_cycle(ctx: dict[str, Any]) -> str:
+    """Phase 5 execution cycle: submit any pending (unsubmitted) orders."""
+    from qtrader.application.agents.execution import ExecutionAgent
+    from qtrader.application.services.portfolio_service import PortfolioService
+    from qtrader.config.container import get_container
+    from qtrader.domain.ports import OrderRepository
+    from qtrader.domain.value_objects import OrderStatus
+
+    container = get_container()
+    portfolio = await container.resolve(PortfolioService).default_portfolio()
+    pending = await container.resolve(OrderRepository).list_by_portfolio(
+        portfolio.portfolio_id or 1, status=OrderStatus.PENDING.value, limit=50
+    )
+    execution = container.resolve(ExecutionAgent)
+    executed = 0
+    for order in pending:
+        if await execution.execute_order(order) is not None:
+            executed += 1
+    return f"executed {executed}/{len(pending)} pending orders"
+
+
 async def train_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -> str:
     """Nightly model training: fit + register + promote when the threshold passes."""
     from qtrader.application.services.model_trainer import ModelTrainer
@@ -151,6 +209,8 @@ class WorkerSettings:
         analyze_cycle,
         predict_cycle,
         decide_cycle,
+        risk_cycle,
+        execute_cycle,
         train_cycle,
     ]
 
@@ -160,6 +220,8 @@ class WorkerSettings:
         cron(analyze_cycle, name="analyze_cycle", minute={2, 17, 32, 47}),
         cron(predict_cycle, name="predict_cycle", minute={4, 19, 34, 49}),
         cron(decide_cycle, name="decide_cycle", minute={6, 21, 36, 51}),
+        cron(risk_cycle, name="risk_cycle", minute={7, 22, 37, 52}),
+        cron(execute_cycle, name="execute_cycle", minute={8, 23, 38, 53}),
         cron(train_cycle, name="train_cycle", hour={2}, minute=0),
     ]
 

@@ -183,7 +183,19 @@ class OrderPlan:
     take_profit: Decimal
     risk_per_trade: Percentage
     estimated_exposure: Percentage
+    entry_price: Decimal = Decimal(0)
 
     def __post_init__(self) -> None:
         if self.quantity <= 0:
             raise ValueError("OrderPlan quantity must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class OrderFill:
+    """Broker result returned by ``BrokerGateway.get_order_status``."""
+
+    broker_order_id: str
+    status: OrderStatus
+    filled_qty: Decimal
+    avg_fill_price: Decimal
+    commission: Decimal = Decimal("0")

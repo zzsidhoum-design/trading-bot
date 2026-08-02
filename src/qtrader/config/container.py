@@ -16,19 +16,33 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from qtrader.application.agents.chief import ChiefAgent
 from qtrader.application.agents.data import DataAgent
+from qtrader.application.agents.execution import ExecutionAgent
 from qtrader.application.agents.fundamental import FundamentalAgent
 from qtrader.application.agents.news import NewsAgent
+from qtrader.application.agents.portfolio import PortfolioAgent
 from qtrader.application.agents.prediction import PredictionAgent
+from qtrader.application.agents.risk import RiskAgent
 from qtrader.application.agents.scanner import MarketScanner
 from qtrader.application.agents.technical import TechnicalAgent
+from qtrader.application.services.allocation_policy import EqualWeightAllocation
 from qtrader.application.services.bar_cleaner import BarCleaner
 from qtrader.application.services.decision_strategy import EnsembleDecisionStrategy
 from qtrader.application.services.feature_store import FeatureStore
 from qtrader.application.services.indicators import IndicatorEngine
 from qtrader.application.services.model_trainer import ModelTrainer
+from qtrader.application.services.portfolio_service import PortfolioService
+from qtrader.application.services.risk_calculator import RiskCalculator, RiskPolicy
 from qtrader.config.settings import Settings
-from qtrader.domain.events import BackfillCompleted, ScanCompleted
+from qtrader.domain.events import (
+    AllocationProposal,
+    BackfillCompleted,
+    DecisionMade,
+    RiskApproved,
+    ScanCompleted,
+)
 from qtrader.domain.ports import (
+    AllocationPolicy,
+    BrokerGateway,
     Cache,
     DecisionRepository,
     DecisionStrategy,
@@ -43,12 +57,18 @@ from qtrader.domain.ports import (
     ModelRepository,
     NewsProvider,
     NewsRepository,
+    OrderRepository,
     PortfolioRepository,
+    PositionRepository,
     PredictionRepository,
     PriceRepository,
+    RiskRepository,
     SignalRepository,
     StockRepository,
+    TradeRepository,
 )
+from qtrader.domain.value_objects import Money, TradingMode
+from qtrader.infrastructure.brokers import AlpacaBroker, PaperBroker
 from qtrader.infrastructure.cache import RedisCache, RedisLock
 from qtrader.infrastructure.data_providers.fundamental import StubFundamentalProvider
 from qtrader.infrastructure.data_providers.yahoo import YahooFinanceProvider
@@ -59,11 +79,15 @@ from qtrader.infrastructure.database.repositories import (
     SQLAlchemyIndicatorRepository,
     SQLAlchemyModelRepository,
     SQLAlchemyNewsRepository,
+    SQLAlchemyOrderRepository,
     SQLAlchemyPortfolioRepository,
+    SQLAlchemyPositionRepository,
     SQLAlchemyPredictionRepository,
     SQLAlchemyPriceRepository,
+    SQLAlchemyRiskRepository,
     SQLAlchemySignalRepository,
     SQLAlchemyStockRepository,
+    SQLAlchemyTradeRepository,
 )
 from qtrader.infrastructure.database.session import build_engine, build_session_factory
 from qtrader.infrastructure.eventbus import InProcessEventBus
@@ -83,6 +107,7 @@ class Container:
         self._redis_client: Redis | None = None
         self._provider: YahooFinanceProvider | None = None
         self._news_provider: RSSNewsProvider | None = None
+        self._broker: BrokerGateway | None = None
         self._build()
 
     def _build(self) -> None:
@@ -104,6 +129,10 @@ class Container:
 
         c.register(StockRepository, instance=SQLAlchemyStockRepository(session_factory))
         c.register(PortfolioRepository, instance=SQLAlchemyPortfolioRepository(session_factory))
+        c.register(PositionRepository, instance=SQLAlchemyPositionRepository(session_factory))
+        c.register(OrderRepository, instance=SQLAlchemyOrderRepository(session_factory))
+        c.register(RiskRepository, instance=SQLAlchemyRiskRepository(session_factory))
+        c.register(TradeRepository, instance=SQLAlchemyTradeRepository(session_factory))
         c.register(PriceRepository, instance=SQLAlchemyPriceRepository(session_factory))
         c.register(SignalRepository, instance=SQLAlchemySignalRepository(session_factory))
         c.register(IndicatorRepository, instance=SQLAlchemyIndicatorRepository(session_factory))
@@ -233,11 +262,89 @@ class Container:
         )
         c.register(ModelTrainer, instance=trainer)
 
+        portfolio_mode = (
+            TradingMode.LIVE if self._settings.live_enabled else TradingMode.PAPER
+        )
+        portfolio_service = PortfolioService(
+            c.resolve(PortfolioRepository),
+            initial_capital=Money(self._settings.portfolio_initial_capital),
+            mode=portfolio_mode,
+        )
+        c.register(PortfolioService, instance=portfolio_service)
+
+        risk_policy = RiskPolicy(
+            risk_per_trade_pct=self._settings.risk_per_trade_pct,
+            max_daily_loss_pct=self._settings.max_daily_loss_pct,
+            max_portfolio_exposure_pct=self._settings.max_portfolio_exposure_pct,
+            max_positions=self._settings.max_positions,
+            per_sector_limit_pct=self._settings.per_sector_limit_pct,
+            max_position_pct_adv=self._settings.max_position_pct_adv,
+            min_cooldown_minutes=self._settings.min_cooldown_minutes,
+            max_trades_per_day=self._settings.max_trades_per_day,
+            atr_stop_mult=self._settings.atr_stop_mult,
+            take_profit_r_mult=self._settings.take_profit_r_mult,
+        )
+        risk_calculator = RiskCalculator(risk_policy)
+        c.register(RiskCalculator, instance=risk_calculator)
+
+        broker: BrokerGateway
+        if self._settings.broker_provider == "alpaca":
+            broker = AlpacaBroker(
+                api_key=self._settings.alpaca_api_key,
+                secret=self._settings.alpaca_secret_key,
+                live=not self._settings.alpaca_paper,
+            )
+        else:
+            broker = PaperBroker(prices=c.resolve(PriceRepository))
+        self._broker = broker
+        c.register(BrokerGateway, instance=broker)
+        c.register(
+            AllocationPolicy,
+            instance=EqualWeightAllocation(self._settings.allocation_weight_per_trade),
+        )
+
+        risk_agent = RiskAgent(
+            calculator=risk_calculator,
+            risk_repo=c.resolve(RiskRepository),
+            portfolio_service=portfolio_service,
+            positions=c.resolve(PositionRepository),
+            orders=c.resolve(OrderRepository),
+            prices=c.resolve(PriceRepository),
+            indicators=c.resolve(IndicatorRepository),
+            stocks=c.resolve(StockRepository),
+            bus=bus,
+        )
+        c.register(RiskAgent, instance=risk_agent)
+
+        portfolio_agent = PortfolioAgent(
+            policy=c.resolve(AllocationPolicy),
+            portfolio_service=portfolio_service,
+            positions=c.resolve(PositionRepository),
+            bus=bus,
+        )
+        c.register(PortfolioAgent, instance=portfolio_agent)
+
+        execution_agent = ExecutionAgent(
+            broker=broker,
+            portfolio_service=portfolio_service,
+            portfolios=c.resolve(PortfolioRepository),
+            positions=c.resolve(PositionRepository),
+            orders=c.resolve(OrderRepository),
+            stocks=c.resolve(StockRepository),
+            trades=c.resolve(TradeRepository),
+            bus=bus,
+        )
+        c.register(ExecutionAgent, instance=execution_agent)
+
         bus.subscribe(ScanCompleted, technical.on_event)
         bus.subscribe(ScanCompleted, news.on_event)
         bus.subscribe(ScanCompleted, fundamental.on_event)
         bus.subscribe(ScanCompleted, prediction.on_event)
         bus.subscribe(ScanCompleted, chief.on_event)
+
+        bus.subscribe(DecisionMade, risk_agent.on_event)
+        bus.subscribe(RiskApproved, portfolio_agent.on_event)
+        bus.subscribe(AllocationProposal, execution_agent.on_event)
 
     def resolve(self, service_type: type[T]) -> T:
         return cast(T, self._container.resolve(service_type))
@@ -267,6 +374,8 @@ class Container:
             await self._provider.close()
         if self._news_provider is not None:
             await self._news_provider.close()
+        if self._broker is not None:
+            await self._broker.close()
         if self._redis_client is not None:
             await self._redis_client.aclose()
         if self._engine is not None:

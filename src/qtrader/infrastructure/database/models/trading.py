@@ -65,7 +65,7 @@ class OrderModel(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    idempotency_key: Mapped[str] = mapped_column(String(36), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
     portfolio_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("portfolios.id"), nullable=False
     )
@@ -75,6 +75,8 @@ class OrderModel(Base):
     quantity: Mapped[Decimal] = mapped_column(Numeric(20, 4), nullable=False)
     limit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     stop_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    stop_loss: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    take_profit: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     broker_order_id: Mapped[str | None] = mapped_column(String(64))
     filled_qty: Mapped[Decimal] = mapped_column(Numeric(20, 4), default=0)

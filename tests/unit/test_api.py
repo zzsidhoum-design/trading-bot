@@ -88,6 +88,9 @@ class FakePortfolioRepository(PortfolioRepository):
             portfolio_id=1,
         )
 
+    async def save(self, portfolio) -> Portfolio:
+        return portfolio
+
 
 class FakeEventRepository(EventRepository):
     def __init__(self) -> None:

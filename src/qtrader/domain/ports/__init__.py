@@ -12,7 +12,7 @@ from typing import Any, TypeVar
 
 from qtrader.domain.entities import AgentEvidence, DecisionOutcome
 from qtrader.domain.events import DomainEvent
-from qtrader.domain.value_objects import PriceBar
+from qtrader.domain.value_objects import OrderFill, PriceBar
 
 T = TypeVar("T")
 EventHandler = Callable[[DomainEvent], Awaitable[None]]
@@ -126,6 +126,9 @@ class PortfolioRepository(ABC):
     @abstractmethod
     async def get(self, portfolio_id: int) -> Any | None: ...
 
+    @abstractmethod
+    async def save(self, portfolio: Any) -> Any: ...
+
 
 class PositionRepository(ABC):
     @abstractmethod
@@ -189,6 +192,30 @@ class PredictionRepository(ABC):
 
     @abstractmethod
     async def latest_for_symbol(self, symbol: str, limit: int = 20) -> list[Any]: ...
+
+
+class RiskRepository(ABC):
+    """Persisted risk-gate evaluations (``risk_history``)."""
+
+    @abstractmethod
+    async def record(self, assessment: Any) -> Any: ...
+
+    @abstractmethod
+    async def recent(self, limit: int = 50) -> list[Any]: ...
+
+
+class TradeRepository(ABC):
+    """Closed P/L records (Memory System core)."""
+
+    @abstractmethod
+    async def record(self, trade: Any) -> Any: ...
+
+
+class AllocationPolicy(ABC):
+    """Capital allocation strategy — turns a risk-approved plan into a size."""
+
+    @abstractmethod
+    def quantity_for(self, plan: Any, cash: Any, open_positions: int) -> Any: ...
 
 
 class DecisionRepository(ABC):
@@ -267,7 +294,10 @@ class BrokerGateway(ABC):
     async def modify_brackets(self, position_id: str, stop_loss: Any, take_profit: Any) -> None: ...
 
     @abstractmethod
-    async def get_order_status(self, broker_order_id: str) -> Any: ...
+    async def get_order_status(self, broker_order_id: str) -> OrderFill: ...
+
+    async def close(self) -> None:  # noqa: B027
+        """Release client resources (default: nothing to clean up)."""
 
 
 class NewsProvider(ABC):
