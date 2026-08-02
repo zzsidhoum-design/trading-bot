@@ -5,13 +5,24 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from qtrader.domain.entities import Trade
-from qtrader.domain.value_objects import TradeSide, TradingMode
+from qtrader.domain.entities import Portfolio, Trade
+from qtrader.domain.value_objects import Money, TradeSide, TradingMode
 from tests.unit.fakes_phase7 import (
     bar,
     make_dashboard_service,
     make_position,
 )
+
+
+def _portfolio(cash: str) -> Portfolio:
+    return Portfolio(
+        name="default",
+        currency="USD",
+        initial_capital=Money(Decimal("100000")),
+        current_cash=Money(Decimal(cash)),
+        mode=TradingMode.BACKTEST,
+        portfolio_id=1,
+    )
 
 
 def _trade(pnl: str, exit_time: datetime) -> Trade:
@@ -63,9 +74,55 @@ async def test_equity_curve_accumulates_closed_pnl() -> None:
     t2 = datetime(2026, 8, 2, tzinfo=UTC)
     service = make_dashboard_service(
         trades=[_trade("150", t1), _trade("-50", t2)],
+        portfolio=_portfolio(cash="100100"),
     )
     points = await service.equity_curve(limit=10)
-    assert [p.equity for p in points] == [Decimal("100150"), Decimal("100100")]
+    assert [p.equity for p in points] == [
+        Decimal("100150"),
+        Decimal("100100"),
+        Decimal("100100"),
+    ]
+
+
+async def test_equity_curve_marks_to_market_open_positions() -> None:
+    ts = datetime(2026, 8, 2, tzinfo=UTC)
+    service = make_dashboard_service(
+        positions=[make_position(symbol="AAPL", quantity=10, avg="100")],
+        latest_bar=bar("AAPL", ts, "109", "111", "108", "110"),
+        portfolio=_portfolio(cash="65000"),
+    )
+    points = await service.equity_curve(limit=10)
+    assert points[-1].equity == Decimal("66100")
+
+
+async def test_trades_include_open_positions() -> None:
+    ts = datetime(2026, 8, 2, tzinfo=UTC)
+    service = make_dashboard_service(
+        positions=[make_position(symbol="AAPL", quantity=10, avg="100")],
+        trades=[_trade("150", ts)],
+        latest_bar=bar("AAPL", ts, "109", "111", "108", "110"),
+    )
+    records = await service.trades()
+    assert len(records) == 2
+    open_entry = next(t for t in records if t.outcome == "open")
+    assert open_entry.symbol == "AAPL"
+    assert open_entry.pnl == Decimal("100")
+    assert open_entry.exit_price == Decimal("110")
+
+
+async def test_performance_includes_live_summary() -> None:
+    t1 = datetime(2026, 8, 1, tzinfo=UTC)
+    service = make_dashboard_service(
+        trades=[_trade("150", t1)],
+        positions=[make_position(symbol="AAPL", quantity=10, avg="100")],
+        latest_bar=bar("AAPL", t1, "109", "111", "108", "110"),
+        portfolio=_portfolio(cash="100100"),
+    )
+    summaries = await service.performance()
+    assert len(summaries) == 1
+    assert summaries[0].trades_count == 1
+    assert summaries[0].mode == TradingMode.BACKTEST
+    assert summaries[0].final_equity == Decimal("101200")
 
 
 async def test_positions_quote_current_price_and_pnl() -> None:
