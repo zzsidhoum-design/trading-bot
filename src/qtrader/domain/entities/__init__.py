@@ -349,3 +349,15 @@ class SystemLog:
     context: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=_now)
     log_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentMetric:
+    """Per-agent performance metric (``agent_metrics`` row)."""
+
+    agent_name: str
+    metric_name: str
+    value: Decimal
+    window: str = "all"
+    computed_at: datetime = field(default_factory=_now)
+    metric_id: int | None = None

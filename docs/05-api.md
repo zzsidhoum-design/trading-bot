@@ -37,6 +37,7 @@
 | GET | `/api/v1/dashboard/trades?from=&to=` | trade history with decision reasons |
 | GET | `/api/v1/dashboard/risk` | risk_history recent + current limits usage |
 | GET | `/api/v1/dashboard/logs?level=&component=` | system_logs |
+| GET | `/api/v1/dashboard/performance?strategy=&mode=` | performance summaries |
 
 ## 3. Market Data
 
@@ -92,7 +93,9 @@ Broadcasts, as JSON frames, any subscribed event in real time:
   "rationale": "EMA cross + ADX>25 + positive earnings revision + prob_up 0.72"}, "ts": "2026-08-01T14:03:00Z"}
 ```
 
-Subscription topics: `events.*` (all), `events.decisions`, `events.orders`, `events.prices.{symbol}`, `events.risk`. Reconnects resume with a snapshot from the outbox (`?since=<uuid>`).
+Topics are requested with `?topics=order,trade,price` and matched as substrings against
+the frame `type` (e.g. `order` matches `OrderSubmitted`/`OrderFilled`). No topics means
+"all events". `type` is the event kind, `data` the payload, `ts` the UTC timestamp.
 
 ---
 

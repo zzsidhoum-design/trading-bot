@@ -350,3 +350,37 @@ class LLMClient(ABC):
 
     @abstractmethod
     async def complete_json(self, system_prompt: str, user_prompt: str, schema: type[T]) -> T: ...
+
+
+class DashboardQueries(ABC):
+    """Read-side aggregation for the dashboard (Phase 7).
+
+    Kept separate from the write repositories so dashboard routes never touch
+    ORM models directly; a single adapter implements all of these.
+    """
+
+    @abstractmethod
+    async def positions(self, portfolio_id: int) -> list[Any]: ...
+
+    @abstractmethod
+    async def trades(
+        self, portfolio_id: int, since: Any | None = None, limit: int = 100
+    ) -> list[Any]: ...
+
+    @abstractmethod
+    async def logs(
+        self, level: str | None = None, component: str | None = None, limit: int = 50
+    ) -> list[Any]: ...
+
+    @abstractmethod
+    async def agent_metrics(
+        self, agent_name: str | None = None, limit: int = 50
+    ) -> list[Any]: ...
+
+    @abstractmethod
+    async def performance(
+        self, strategy: str | None = None, mode: Any | None = None, limit: int = 50
+    ) -> list[Any]: ...
+
+    @abstractmethod
+    async def models(self) -> list[Any]: ...

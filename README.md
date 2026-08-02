@@ -2,7 +2,7 @@
 
 Professional, scalable, event-driven trading platform. Python 3.12+, Clean Architecture, SOLID, async everywhere.
 
-> **Status: PHASES 1–6 COMPLETE** — foundation, DB, API, worker, ten agents (Data, Scanner, Technical, News, Fundamental, Prediction, Chief, Risk, Portfolio, Execution) and the deterministic backtesting engine + SystemGate graduation gate are implemented and verified against the live container stack (`docker compose`). The full order lifecycle was verified end-to-end in the live stack: Chief → Risk (ATR-sized plans, bracket stops) → Portfolio (allocation) → Execution (paper fills, positions, trades, cash accounting). Prediction (ML probability-of-movement with a versioned model registry) and Chief (explainable BUY/SELL/HOLD decisions) were likewise verified live, including training + promotion. Backtesting replays stored bars through the production indicators + risk sizing (`BacktestRunner` → `strategy_performance` → `SystemGate` graduation), scheduled nightly as `backtest_cycle`; CI (GitHub Actions) gates merges on ruff + mypy + coverage. See the Roadmap for what remains (dashboard, hardening).
+> **Status: PHASES 1–7 COMPLETE** — foundation, DB, API, worker, ten agents (Data, Scanner, Technical, News, Fundamental, Prediction, Chief, Risk, Portfolio, Execution), the deterministic backtesting engine + SystemGate graduation gate, and the Phase 7 API + dashboard are implemented and verified against the live container stack (`docker compose`). The full order lifecycle was verified end-to-end in the live stack: Chief → Risk (ATR-sized plans, bracket stops) → Portfolio (allocation) → Execution (paper fills, positions, trades, cash accounting). Prediction (ML probability-of-movement with a versioned model registry) and Chief (explainable BUY/SELL/HOLD decisions) were likewise verified live, including training + promotion. Backtesting replays stored bars through the production indicators + risk sizing (`BacktestRunner` → `strategy_performance` → `SystemGate` graduation), scheduled nightly as `backtest_cycle`; CI (GitHub Actions) gates merges on ruff + mypy + coverage. Phase 7 adds the FastAPI dashboard surface (read aggregation, manual order entry, model training/promotion, agent control, WebSocket topic filters) plus a static SPA at `/` and an API integration test suite against live Postgres. See the Roadmap for what remains (hardening).
 
 ## Capabilities
 
@@ -65,7 +65,7 @@ scripts/         dev/ops helpers
 4. **Prediction + Chief** — FeatureStore, model training/inference, ensemble decision engine. ✅ *(complete)*
 5. **Risk + Portfolio + Execution** — RiskCalculator, allocation policies, broker adapters (Paper/Alpaca), Memory System wiring. ✅ *(complete)*
 6. **Backtesting + graduation gate** — replay engine, SystemGate, CI pipeline. ✅ *(complete)*
-7. **API + Dashboard** — FastAPI routes, WebSocket hub, web UI.
+7. **API + Dashboard** — FastAPI routes, WebSocket hub, web UI. ✅ *(complete)*
 8. **Hardening** — load test, fault injection, sharding, docs review.
 
 ## Safety

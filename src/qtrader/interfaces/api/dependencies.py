@@ -4,13 +4,24 @@ from __future__ import annotations
 
 from fastapi import Depends, Header, HTTPException, status
 
+from qtrader.application.services.backtest import BacktestRunner
+from qtrader.application.services.dashboard_service import DashboardService
+from qtrader.application.use_cases.manual_order import ManualOrder
 from qtrader.config.container import Container
 from qtrader.config.container import get_container as _shared_container
 from qtrader.config.settings import Settings
 from qtrader.domain.ports import (
+    BacktestRepository,
     EventRepository,
+    IndicatorRepository,
+    ModelRepository,
+    NewsRepository,
+    OrderRepository,
     PortfolioRepository,
+    PredictionRepository,
     PriceRepository,
+    RiskRepository,
+    SignalRepository,
     StockRepository,
 )
 
@@ -36,8 +47,60 @@ def get_portfolio_repository(container: Container = Depends(get_container)) -> P
     return container.resolve(PortfolioRepository)
 
 
+def get_order_repository(container: Container = Depends(get_container)) -> OrderRepository:
+    return container.resolve(OrderRepository)
+
+
+def get_risk_repository(container: Container = Depends(get_container)) -> RiskRepository:
+    return container.resolve(RiskRepository)
+
+
 def get_event_repository(container: Container = Depends(get_container)) -> EventRepository:
     return container.resolve(EventRepository)
+
+
+def get_indicator_repository(
+    container: Container = Depends(get_container),
+) -> IndicatorRepository:
+    return container.resolve(IndicatorRepository)
+
+
+def get_signal_repository(container: Container = Depends(get_container)) -> SignalRepository:
+    return container.resolve(SignalRepository)
+
+
+def get_news_repository(container: Container = Depends(get_container)) -> NewsRepository:
+    return container.resolve(NewsRepository)
+
+
+def get_prediction_repository(
+    container: Container = Depends(get_container),
+) -> PredictionRepository:
+    return container.resolve(PredictionRepository)
+
+
+def get_backtest_repository(
+    container: Container = Depends(get_container),
+) -> BacktestRepository:
+    return container.resolve(BacktestRepository)
+
+
+def get_backtest_runner(container: Container = Depends(get_container)) -> BacktestRunner:
+    return container.resolve(BacktestRunner)
+
+
+def get_model_repository(container: Container = Depends(get_container)) -> ModelRepository:
+    return container.resolve(ModelRepository)
+
+
+def get_dashboard_service(
+    container: Container = Depends(get_container),
+) -> DashboardService:
+    return container.resolve(DashboardService)
+
+
+def get_manual_order(container: Container = Depends(get_container)) -> ManualOrder:
+    return container.resolve(ManualOrder)
 
 
 def require_api_key(

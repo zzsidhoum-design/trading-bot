@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>qtrader dashboard</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    background: #0d1117; color: #c9d1d9; font-size: 14px;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 12px 20px;
+    border-bottom: 1px solid #30363d; background: #161b22; position: sticky; top: 0;
+  }
+  header h1 { font-size: 16px; margin: 0; color: #58a6ff; }
+  header input, header select, header button, .panel button, .panel input, .panel select {
+    background: #0d1117; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px;
+    padding: 6px 8px; font: inherit;
+  }
+  header button, .panel button { cursor: pointer; background: #238636; border-color: #238636; color: #fff; }
+  header button.off { background: #30363d; border-color: #30363d; }
+  .container { display: grid; grid-template-columns: 340px 1fr; gap: 16px; padding: 16px 20px; align-items: start; }
+  .panel { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+  .panel h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: #8b949e; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; }
+  .card .k { color: #8b949e; font-size: 11px; text-transform: uppercase; }
+  .card .v { font-size: 20px; font-weight: 600; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #21262d; }
+  th { color: #8b949e; font-size: 11px; text-transform: uppercase; }
+  .pos { color: #3fb950; } .neg { color: #f85149; }
+  canvas { width: 100%; height: 220px; }
+  #feed { max-height: 300px; overflow-y: auto; font-size: 12px; }
+  #feed div { padding: 4px 0; border-bottom: 1px dashed #21262d; }
+  .muted { color: #8b949e; }
+  .form-row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .status { color: #d29922; }
+</style>
+</head>
+<body>
+<header>
+  <h1>qtrader</h1>
+  <input id="apiKey" placeholder="API key" type="password" value="dev-local-key" />
+  <select id="mode"></select>
+  <button id="modeBtn" class="off">set mode</button>
+  <span id="conn" class="muted">ws: --</span>
+</header>
+<div class="container">
+  <div>
+    <div class="panel">
+      <h2>summary</h2>
+      <div id="summary" class="muted">loading…</div>
+    </div>
+    <div class="panel">
+      <h2>positions</h2>
+      <div id="positions" class="muted">loading…</div>
+    </div>
+    <div class="panel">
+      <h2>live feed</h2>
+      <div class="form-row"><select id="feedTopics">
+        <option value="">all topics</option>
+        <option value="order" selected>order</option>
+        <option value="trade">trade</option>
+        <option value="price">price</option>
+        <option value="signal">signal</option>
+      </select></div>
+      <div id="feed" class="muted">disconnected</div>
+    </div>
+  </div>
+  <div>
+    <div class="cards">
+      <div class="card"><div class="k">cash</div><div class="v" id="cCash">—</div></div>
+      <div class="card"><div class="k">equity</div><div class="v" id="cEquity">—</div></div>
+      <div class="card"><div class="k">open positions</div><div class="v" id="cPositions">—</div></div>
+      <div class="card"><div class="k">unrealized pnl</div><div class="v" id="cPnl">—</div></div>
+    </div>
+    <div class="panel"><h2>equity curve</h2><canvas id="eqChart"></canvas></div>
+    <div class="panel"><h2>recent trades</h2><div id="trades" class="muted">loading…</div></div>
+    <div class="panel"><h2>performance</h2><div id="performance" class="muted">loading…</div></div>
+    <div class="panel"><h2>manual order</h2>
+      <div class="form-row">
+        <input id="oSymbol" placeholder="SYMBOL" value="AAPL" />
+        <select id="oSide"><option>BUY</option><option>SELL</option></select>
+        <input id="oQty" type="number" min="1" value="10" placeholder="qty" />
+        <input id="oSl" placeholder="stop loss" />
+        <input id="oTp" placeholder="take profit" />
+        <button id="oGo">submit</button>
+      </div>
+      <div id="oStatus" class="status"></div>
+    </div>
+  </div>
+</div>
+<script>
+"use strict";
+const key = () => document.getElementById("apiKey").value;
+const headers = () => ({ "X-API-Key": key(), "Content-Type": "application/json" });
+const $ = (id) => document.getElementById(id);
+const money = (s) => {
+  if (s === null || s === undefined || s === "") return "—";
+  const n = Number(s);
+  return (n < 0 ? "-$" : "$") + Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+};
+const num = (s) => (s === null || s === undefined || s === "" ? "—" : Number(s).toLocaleString(undefined, { maximumFractionDigits: 2 }));
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { ...headers(), ...(opts.headers || {}) } });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(res.status + " " + body.slice(0, 200));
+  }
+  return res.status === 204 ? null : res.json();
+}
+
+function fmt(iso) { return iso ? new Date(iso).toLocaleString() : "—"; }
+function table(headers, rows) {
+  if (!rows.length) return '<span class="muted">none</span>';
+  const esc = (v) => String(v === null || v === undefined ? "" : v)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return "<table><thead><tr>" + headers.map(h => "<th>" + esc(h) + "</th>").join("") +
+    "</tr></thead><tbody>" + rows.map(r => "<tr>" + r.map(c => "<td>" + esc(c) + "</td>").join("") + "</tr>").join("") +
+    "</tbody></table>";
+}
+const pnlCls = (v) => { const n = parseFloat(v); return isNaN(n) || n === 0 ? "" : n > 0 ? "pos" : "neg"; };
+
+async function loadSummary() {
+  const s = await api("/api/v1/dashboard/summary");
+  $("cCash").textContent = money(s.cash);
+  $("cEquity").textContent = money(s.equity);
+  $("cPositions").textContent = s.open_positions;
+  const pnl = parseFloat(s.unrealized_pnl);
+  $("cPnl").textContent = money(s.unrealized_pnl);
+  $("cPnl").className = pnlCls(s.unrealized_pnl);
+  $("summary").innerHTML = table(["field", "value"], [
+    ["initial/exposure", s.exposure_pct + "%"],
+    ["total trades", s.total_trades],
+    ["open positions", s.open_positions],
+  ]);
+}
+
+async function loadEquity() {
+  const pts = await api("/api/v1/dashboard/equity?limit=250");
+  const cv = $("eqChart");
+  const ctx = cv.getContext("2d");
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  cv.width = cv.clientWidth * 2; cv.height = 220 * 2;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (!pts.length) { ctx.fillStyle = "#8b949e"; ctx.fillText("no data", 10, 20); return; }
+  const values = pts.map(p => Number(p.equity));
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const pad = 20, w = cv.width, h = cv.height;
+  const X = (i) => pad + (i / (values.length - 1)) * (w - pad * 2);
+  const Y = (v) => pad + (1 - (v - lo) / ((hi - lo) || 1)) * (h - pad * 2);
+  ctx.strokeStyle = "#30363d"; ctx.beginPath();
+  for (let g = 0; g < 4; g++) { const y = pad + (g / 3) * (h - pad * 2); ctx.moveTo(pad, y); ctx.lineTo(w - pad, y); }
+  ctx.stroke();
+  ctx.strokeStyle = "#58a6ff"; ctx.lineWidth = 2; ctx.beginPath();
+  values.forEach((v, i) => { i ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)); });
+  ctx.stroke();
+  ctx.fillStyle = "#8b949e"; ctx.font = "12px monospace";
+  ctx.fillText("$" + hi.toLocaleString(), 4, pad + 10);
+  ctx.fillText("$" + lo.toLocaleString(), 4, h - pad - 4);
+}
+
+async function loadPositions() {
+  const rows = await api("/api/v1/dashboard/positions");
+  $("positions").innerHTML = table(["symbol", "qty", "avg", "px", "pnl"], rows.map(p => [
+    p.symbol || "?", p.quantity, money(p.avg_entry_price),
+    money(p.current_price), money(p.unrealized_pnl),
+  ]));
+}
+
+async function loadTrades() {
+  const rows = await api("/api/v1/dashboard/trades?limit=50");
+  $("trades").innerHTML = table(["time", "symbol", "side", "qty", "entry", "exit", "pnl"], rows.map(t => [
+    fmt(t.exit_time), t.symbol || "?", t.side, num(t.quantity),
+    money(t.entry_price), money(t.exit_price),
+    { v: money(t.pnl), cls: pnlCls(t.pnl) },
+  ].map(c => typeof c === "object" ? c : { v: c, cls: "" }).map(c => `<td class="${c.cls}">${c.v}</td>`).join("")));
+}
+
+async function loadPerformance() {
+  const rows = await api("/api/v1/dashboard/performance?limit=20");
+  $("performance").innerHTML = table(["strategy", "mode", "period", "return", "sharpe", "trades"], rows.map(p => [
+    p.strategy, p.mode,
+    (p.period_start || "").slice(0, 10) + " → " + (p.period_end || "").slice(0, 10),
+    { v: (p.total_return || 0) + "%", cls: pnlCls(p.total_return) },
+    p.sharpe ?? "—", num(p.trades_count),
+  ].map(c => typeof c === "object" ? c : { v: c, cls: "" }).map(c => `<td class="${c.cls}">${c.v}</td>`).join("")));
+}
+
+async function loadModes() {
+  const st = await api("/api/v1/system/status");
+  const sel = $("mode");
+  sel.innerHTML = "";
+  for (const m of ["paper", "backtest", "live"]) {
+    const o = document.createElement("option");
+    o.value = m; o.textContent = m.toUpperCase();
+    sel.appendChild(o);
+  }
+  sel.value = st.mode;
+}
+
+async function refresh() {
+  try {
+    await Promise.all([loadSummary(), loadEquity(), loadPositions(), loadTrades(), loadPerformance()]);
+  } catch (e) {
+    $("summary").innerHTML = '<span class="neg">' + e.message + "</span>";
+  }
+}
+
+let ws = null;
+function connectWs() {
+  if (ws) ws.close();
+  const topic = $("feedTopics").value;
+  const qs = topic ? "&topics=" + encodeURIComponent(topic) : "";
+  ws = new WebSocket("/ws/live?api_key=" + encodeURIComponent(key()) + qs);
+  const feed = $("feed");
+  ws.onopen = () => { $("conn").textContent = "ws: connected"; feed.innerHTML = ""; };
+  ws.onclose = () => { $("conn").textContent = "ws: closed"; };
+  ws.onerror = () => { $("conn").textContent = "ws: error"; };
+  ws.onmessage = (msg) => {
+    const evt = JSON.parse(msg.data);
+    const line = document.createElement("div");
+    line.innerHTML = "<b>" + esc(evt.type) + "</b> <span class='muted'>" + fmt(evt.ts) + "</span> " + esc(JSON.stringify(evt.data));
+    feed.prepend(line);
+    while (feed.childElementCount > 100) feed.removeChild(feed.lastChild);
+  };
+}
+const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+$("modeBtn").onclick = async () => {
+  $("modeBtn").textContent = "…";
+  try {
+    const st = await api("/api/v1/system/mode", { method: "POST", body: JSON.stringify({ mode: $("mode").value }) });
+    $("modeBtn").textContent = "mode: " + st.mode;
+  } catch (e) {
+    $("modeBtn").textContent = "error";
+    alert(e.message);
+  }
+};
+
+$("oGo").onclick = async () => {
+  $("oStatus").textContent = "submitting…";
+  try {
+    const body = {
+      symbol: $("oSymbol").value.trim().toUpperCase(),
+      side: $("oSide").value,
+      quantity: parseInt($("oQty").value, 10),
+      order_type: "MARKET",
+      stop_loss: $("oSl").value || null,
+      take_profit: $("oTp").value || null,
+    };
+    const order = await api("/api/v1/portfolio/orders", { method: "POST", body: JSON.stringify(body) });
+    $("oStatus").textContent = "order " + order.order_id + " → " + order.status;
+    refresh();
+  } catch (e) {
+    $("oStatus").textContent = e.message;
+  }
+};
+
+$("feedTopics").onchange = connectWs;
+$("apiKey").onchange = () => { connectWs(); refresh(); };
+refresh();
+loadModes().then(() => { $("modeBtn").textContent = "mode: " + $("mode").value; }).catch(() => {});
+connectWs();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

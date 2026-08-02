@@ -135,12 +135,14 @@ def app() -> FastAPI:
 
 
 @pytest.fixture
-def client(app: FastAPI):
+async def client(app: FastAPI):
     from httpx import ASGITransport
 
-    return httpx.AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
-    )
+    async_client = httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    try:
+        yield async_client
+    finally:
+        await async_client.aclose()
 
 
 async def _get(client: httpx.AsyncClient, path: str) -> httpx.Response:

@@ -27,6 +27,7 @@ from qtrader.application.agents.technical import TechnicalAgent
 from qtrader.application.services.allocation_policy import EqualWeightAllocation
 from qtrader.application.services.backtest import BacktestRunner
 from qtrader.application.services.bar_cleaner import BarCleaner
+from qtrader.application.services.dashboard_service import DashboardService
 from qtrader.application.services.decision_strategy import EnsembleDecisionStrategy
 from qtrader.application.services.feature_store import FeatureStore
 from qtrader.application.services.indicators import IndicatorEngine
@@ -34,6 +35,7 @@ from qtrader.application.services.model_trainer import ModelTrainer
 from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskPolicy
 from qtrader.application.services.system_gate import GateThresholds, SystemGate
+from qtrader.application.use_cases.manual_order import ManualOrder
 from qtrader.config.settings import Settings
 from qtrader.domain.events import (
     AllocationProposal,
@@ -47,6 +49,7 @@ from qtrader.domain.ports import (
     BacktestRepository,
     BrokerGateway,
     Cache,
+    DashboardQueries,
     DecisionRepository,
     DecisionStrategy,
     EventBus,
@@ -79,6 +82,7 @@ from qtrader.infrastructure.data_providers.fundamental import StubFundamentalPro
 from qtrader.infrastructure.data_providers.yahoo import YahooFinanceProvider
 from qtrader.infrastructure.database.repositories import (
     SQLAlchemyBacktestRepository,
+    SQLAlchemyDashboardRepository,
     SQLAlchemyDecisionRepository,
     SQLAlchemyEventRepository,
     SQLAlchemyFundamentalRepository,
@@ -153,6 +157,7 @@ class Container:
         c.register(BacktestRepository, instance=SQLAlchemyBacktestRepository(session_factory))
         c.register(PerformanceRepository, instance=SQLAlchemyPerformanceRepository(session_factory))
         c.register(SystemLogRepository, instance=SQLAlchemySystemLogRepository(session_factory))
+        c.register(DashboardQueries, instance=SQLAlchemyDashboardRepository(session_factory))
 
         c.register(FundamentalProvider, instance=StubFundamentalProvider())
 
@@ -323,6 +328,18 @@ class Container:
         )
         c.register(BacktestRunner, instance=backtest_runner)
 
+        c.register(
+            DashboardService,
+            instance=DashboardService(
+                queries=c.resolve(DashboardQueries),
+                portfolios=c.resolve(PortfolioRepository),
+                prices=c.resolve(PriceRepository),
+                risks=c.resolve(RiskRepository),
+                cache=c.resolve(Cache),
+                stocks=c.resolve(StockRepository),
+            ),
+        )
+
         broker: BrokerGateway
         if self._settings.broker_provider == "alpaca":
             broker = AlpacaBroker(
@@ -373,6 +390,21 @@ class Container:
             gate_strategy=self._settings.gate_strategy,
         )
         c.register(ExecutionAgent, instance=execution_agent)
+
+        c.register(
+            ManualOrder,
+            instance=ManualOrder(
+                portfolios=portfolio_service,
+                stocks=c.resolve(StockRepository),
+                prices=c.resolve(PriceRepository),
+                indicators=c.resolve(IndicatorRepository),
+                positions=c.resolve(PositionRepository),
+                orders=c.resolve(OrderRepository),
+                risk_calculator=risk_calculator,
+                execution=execution_agent,
+                settings=self._settings,
+            ),
+        )
 
         bus.subscribe(ScanCompleted, technical.on_event)
         bus.subscribe(ScanCompleted, news.on_event)
