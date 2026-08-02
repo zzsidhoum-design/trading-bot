@@ -186,6 +186,9 @@ class FakePortfolioRepository(PortfolioRepository):
     async def get(self, portfolio_id: int) -> Portfolio | None:
         return self._portfolio
 
+    async def first(self) -> Portfolio | None:
+        return self._portfolio
+
     async def save(self, portfolio: Portfolio) -> Portfolio:
         self._portfolio = portfolio
         return portfolio

@@ -12,6 +12,7 @@ from qtrader.application.services.risk_calculator import RiskCalculator, RiskPol
 from qtrader.application.use_cases.manual_order import (
     ManualOrder,
     ManualOrderRequest,
+    NoPriceDataError,
     OrderRejectedError,
 )
 from qtrader.config.settings import Settings
@@ -120,7 +121,7 @@ async def test_submit_rejects_when_risk_gate_blocks() -> None:
 
 async def test_submit_rejects_unknown_symbol_via_price_missing() -> None:
     manual, _, _, _ = _build()
-    with pytest.raises(ValueError):
+    with pytest.raises(NoPriceDataError):
         await manual.submit(
             ManualOrderRequest(symbol="ZZZZ", side="BUY", quantity=10)
         )

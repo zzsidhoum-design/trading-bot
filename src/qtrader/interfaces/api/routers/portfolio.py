@@ -5,9 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 
 from qtrader.application.services.dashboard_service import DashboardService
+from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.application.use_cases.manual_order import (
     ManualOrder,
     ManualOrderRequest,
+    NoPriceDataError,
     OrderRejectedError,
 )
 from qtrader.domain.entities import Order, OrderStatus
@@ -18,6 +20,7 @@ from qtrader.interfaces.api.dependencies import (
     get_manual_order,
     get_order_repository,
     get_portfolio_repository,
+    get_portfolio_service,
     require_api_key,
 )
 from qtrader.interfaces.api.schemas import (
@@ -57,10 +60,10 @@ def _order_out(order: Order) -> OrderOut:
     dependencies=[Depends(require_api_key)],
 )
 async def portfolio_summary(
-    portfolio_id: int = 1,
+    portfolios: PortfolioService = Depends(get_portfolio_service),
     portfolio_repo: PortfolioRepository = Depends(get_portfolio_repository),
 ) -> PortfolioSummary:
-    portfolio = await portfolio_repo.get(portfolio_id)
+    portfolio = await portfolios.default_portfolio()
     if portfolio is None:
         raise HTTPException(status_code=404, detail="portfolio not found")
     return PortfolioSummary(
@@ -80,11 +83,14 @@ async def portfolio_summary(
 )
 async def list_orders(
     status: OrderStatus | None = None,
-    portfolio_id: int = 1,
     limit: int = 100,
+    portfolios: PortfolioService = Depends(get_portfolio_service),
     order_repo: OrderRepository = Depends(get_order_repository),
 ) -> list[OrderOut]:
-    orders = await order_repo.list_by_portfolio(portfolio_id, status, min(limit, 500))
+    default = await portfolios.default_portfolio()
+    orders = await order_repo.list_by_portfolio(
+        default.portfolio_id or 1, status, min(limit, 500)
+    )
     return [_order_out(o) for o in orders]
 
 
@@ -103,6 +109,8 @@ async def submit_order(
             ManualOrderRequest.from_schema(body),
         )
     except OrderRejectedError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except NoPriceDataError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _order_out(order)
 

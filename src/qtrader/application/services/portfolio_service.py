@@ -33,6 +33,11 @@ class PortfolioService:
                 return cast(Portfolio, portfolio)
         portfolio = await self._repo.get(self._default_id)
         if portfolio is None:
+            # The default (id 1) may have been deleted (e.g. test wipe).
+            # Reuse whatever portfolio already exists instead of creating a
+            # fresh one every instance, which pollutes the DB with orphans.
+            portfolio = await self._repo.first()
+        if portfolio is None:
             portfolio = await self._repo.create(
                 Portfolio(
                     name=self._name,

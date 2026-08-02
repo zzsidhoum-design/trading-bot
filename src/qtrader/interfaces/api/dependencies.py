@@ -6,6 +6,7 @@ from fastapi import Depends, Header, HTTPException, status
 
 from qtrader.application.services.backtest import BacktestRunner
 from qtrader.application.services.dashboard_service import DashboardService
+from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.application.use_cases.manual_order import ManualOrder
 from qtrader.config.container import Container
 from qtrader.config.container import get_container as _shared_container
@@ -97,6 +98,12 @@ def get_dashboard_service(
     container: Container = Depends(get_container),
 ) -> DashboardService:
     return container.resolve(DashboardService)
+
+
+def get_portfolio_service(
+    container: Container = Depends(get_container),
+) -> PortfolioService:
+    return container.resolve(PortfolioService)
 
 
 def get_manual_order(container: Container = Depends(get_container)) -> ManualOrder:

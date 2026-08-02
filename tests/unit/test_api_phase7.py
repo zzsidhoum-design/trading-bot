@@ -161,6 +161,7 @@ class FakeContainer:
             ManualOrder: self.manual_order,
             ExecutionAgent: self.execution,
             BacktestRunner: self.backtest_runner,
+            PortfolioService: PortfolioService(self.portfolios, default_id=1),
         }
 
     def resolve(self, service_type: type) -> object:

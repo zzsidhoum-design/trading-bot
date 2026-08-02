@@ -104,49 +104,64 @@ async def test_pipeline_backfill_then_scan(
     for key in (f"{SCAN_ZSET_PREFIX}:overall", f"{SCAN_ZSET_PREFIX}:liquidity"):
         await redis_client.delete(key)
 
-    data_agent = DataAgent(
-        FakeYahoo(), price_repo, cache, bus, BarCleaner(), quote_cache_ttl_seconds=300
-    )
-    scanner = MarketScanner(
-        prices=price_repo,
-        cache=cache,
-        stocks=stock_repo,
-        bus=bus,
-        interval=Interval.M5,
-        top_k=5,
-        min_dollar_volume=0.0,
-        min_atr_pct=0.0,
-    )
-    bus.subscribe(BackfillCompleted, scanner.on_event)
+    # isolate the scan universe to TSTC/TSTD (the dev DB may hold real symbols)
+    from sqlalchemy import select
 
-    inserted_a = await data_agent.backfill("TSTC", Interval.M5, START, END)
-    inserted_b = await data_agent.backfill("TSTD", Interval.M5, START, END)
-    assert inserted_a == 40
-    assert inserted_b == 40
+    async with session_factory() as session:
+        all_rows = (await session.scalars(select(StockModel))).all()
+        deactivated = [r for r in all_rows if r.symbol not in {"TSTC", "TSTD"}]
+        for row in deactivated:
+            row.is_active = False
+        await session.commit()
 
-    history = await price_repo.history("TSTC", Interval.M5)
-    assert len(history) == 40
+    try:
+        data_agent = DataAgent(
+            FakeYahoo(), price_repo, cache, bus, BarCleaner(), quote_cache_ttl_seconds=300
+        )
+        scanner = MarketScanner(
+            prices=price_repo,
+            cache=cache,
+            stocks=stock_repo,
+            bus=bus,
+            interval=Interval.M5,
+            top_k=5,
+            min_dollar_volume=0.0,
+            min_atr_pct=0.0,
+        )
+        bus.subscribe(BackfillCompleted, scanner.on_event)
 
-    quote = await cache.get("quote:TSTC")
-    assert quote is not None
+        inserted_a = await data_agent.backfill("TSTC", Interval.M5, START, END)
+        inserted_b = await data_agent.backfill("TSTD", Interval.M5, START, END)
+        assert inserted_a == 40
+        assert inserted_b == 40
 
-    # scanner ran via the BackfillCompleted subscription
-    top = await cache.zrevrange(f"{SCAN_ZSET_PREFIX}:overall", 0, 4)
-    assert {symbol for symbol, _ in top} == {"TSTC", "TSTD"}
-    # composite scores are populated (not zeros) and rank TSTD above TSTC:
-    # TSTD wins momentum & volatility, loses liquidity.
-    assert top[0][0] == "TSTD"
-    assert top[0][1] > 0
-    assert top[1][1] < 0
+        history = await price_repo.history("TSTC", Interval.M5)
+        assert len(history) == 40
 
-    events = await event_repo.list_after(None, "ScanCompleted", 10)
-    assert len(events) >= 2
-    scan = events[-1]
-    assert isinstance(scan, ScanCompleted)
-    symbols = {c["symbol"] for c in scan.candidates}
-    assert symbols == {"TSTC", "TSTD"}
+        quote = await cache.get("quote:TSTC")
+        assert quote is not None
 
-    await bus.close()
+        # scanner ran via the BackfillCompleted subscription
+        top = await cache.zrevrange(f"{SCAN_ZSET_PREFIX}:overall", 0, 4)
+        assert {symbol for symbol, _ in top} == {"TSTC", "TSTD"}
+        # composite scores are populated (not zeros) and rank TSTD above TSTC:
+        # TSTD wins momentum & volatility, loses liquidity.
+        assert top[0][0] == "TSTD"
+        assert top[0][1] > 0
+        assert top[1][1] < 0
+
+        events = await event_repo.list_after(None, "ScanCompleted", 10)
+        assert len(events) >= 2
+        scan = events[-1]
+        assert isinstance(scan, ScanCompleted)
+        symbols = {c["symbol"] for c in scan.candidates}
+        assert symbols == {"TSTC", "TSTD"}
+    finally:
+        async with session_factory() as session:
+            for row in deactivated:
+                row.is_active = True
+            await session.commit()
+        await bus.close()
 
 
 def select_stocks():

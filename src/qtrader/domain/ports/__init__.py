@@ -127,6 +127,10 @@ class PortfolioRepository(ABC):
     async def get(self, portfolio_id: int) -> Any | None: ...
 
     @abstractmethod
+    async def first(self) -> Any | None:
+        """Return any existing portfolio (lowest id), or None."""
+
+    @abstractmethod
     async def save(self, portfolio: Any) -> Any: ...
 
 

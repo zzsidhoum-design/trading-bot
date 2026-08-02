@@ -139,6 +139,23 @@ class SQLAlchemyPortfolioRepository(PortfolioRepository):
                 portfolio_id=row.id,
             )
 
+    async def first(self) -> Portfolio | None:
+        async with self._session_factory() as session:
+            row = await session.scalar(
+                select(PortfolioModel).order_by(PortfolioModel.id).limit(1)
+            )
+            if row is None:
+                return None
+            return Portfolio(
+                name=row.name,
+                currency=row.currency,
+                initial_capital=Money(row.initial_capital),
+                current_cash=Money(row.current_cash),
+                mode=TradingMode(row.mode),
+                status=row.status,
+                portfolio_id=row.id,
+            )
+
     async def save(self, portfolio: Portfolio) -> Portfolio:
         assert portfolio.portfolio_id is not None
         async with self._session_factory() as session:
@@ -168,6 +185,26 @@ class SQLAlchemyPriceRepository(PriceRepository):
                 select(StockModel).where(StockModel.symbol.in_(symbols))
             )
             stock_ids: dict[str, int] = {r.symbol: r.id for r in rows}
+            missing = symbols - set(stock_ids)
+            if missing:
+                insert_stocks = (
+                    pg_insert(StockModel)
+                    .values(
+                        [
+                            {"symbol": s, "exchange": "YAHOO", "name": s}
+                            for s in sorted(missing)
+                        ]
+                    )
+                    .on_conflict_do_nothing(constraint="uq_stocks_symbol_exchange")
+                    .returning(StockModel.id, StockModel.symbol)
+                )
+                created = (await session.execute(insert_stocks)).all()
+                stock_ids.update({sym: sid for sid, sym in created})
+                if len(created) < len(missing):
+                    rest = (await session.scalars(
+                        select(StockModel).where(StockModel.symbol.in_(missing))
+                    )).all()
+                    stock_ids.update({r.symbol: r.id for r in rest})
             payload = [
                 {
                     "stock_id": stock_ids[b.symbol],

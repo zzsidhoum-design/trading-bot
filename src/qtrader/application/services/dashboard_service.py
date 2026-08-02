@@ -12,6 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.domain.entities import Position, Trade
 from qtrader.domain.ports import (
     Cache,
@@ -66,6 +67,7 @@ class DashboardService:
         risks: RiskRepository,
         cache: Cache,
         stocks: StockRepository,
+        portfolio_service: PortfolioService | None = None,
     ) -> None:
         self._queries = queries
         self._portfolios = portfolios
@@ -73,8 +75,19 @@ class DashboardService:
         self._risks = risks
         self._cache = cache
         self._stocks = stocks
+        self._portfolio_service = portfolio_service
 
-    async def summary(self, portfolio_id: int = 1) -> DashboardSummary | None:
+    async def _resolve_portfolio_id(self, portfolio_id: int | None) -> int:
+        if portfolio_id is not None:
+            return portfolio_id
+        if self._portfolio_service is not None:
+            portfolio = await self._portfolio_service.default_portfolio()
+            if portfolio.portfolio_id is not None:
+                return portfolio.portfolio_id
+        return 1
+
+    async def summary(self, portfolio_id: int | None = None) -> DashboardSummary | None:
+        portfolio_id = await self._resolve_portfolio_id(portfolio_id)
         portfolio = await self._portfolios.get(portfolio_id)
         if portfolio is None:
             return None
@@ -103,8 +116,9 @@ class DashboardService:
         )
 
     async def equity_curve(
-        self, portfolio_id: int = 1, limit: int = 200
+        self, portfolio_id: int | None = None, limit: int = 200
     ) -> list[EquityPoint]:
+        portfolio_id = await self._resolve_portfolio_id(portfolio_id)
         portfolio = await self._portfolios.get(portfolio_id)
         if portfolio is None:
             return []
@@ -121,7 +135,8 @@ class DashboardService:
             points.append(EquityPoint(ts=datetime.now(), equity=equity))
         return points[-limit:]
 
-    async def positions(self, portfolio_id: int = 1) -> list[PositionQuote]:
+    async def positions(self, portfolio_id: int | None = None) -> list[PositionQuote]:
+        portfolio_id = await self._resolve_portfolio_id(portfolio_id)
         quotes: list[PositionQuote] = []
         for position in await self._queries.positions(portfolio_id):
             bar = await self._prices.latest(position.symbol or "", Interval.D1)
@@ -134,7 +149,8 @@ class DashboardService:
             quotes.append(PositionQuote(position, current, unrealized))
         return quotes
 
-    async def allocation(self, portfolio_id: int = 1) -> list[AllocationSlice]:
+    async def allocation(self, portfolio_id: int | None = None) -> list[AllocationSlice]:
+        portfolio_id = await self._resolve_portfolio_id(portfolio_id)
         portfolio = await self._portfolios.get(portfolio_id)
         if portfolio is None:
             return []
@@ -176,8 +192,9 @@ class DashboardService:
         return await self._cache.zrevrange(key, 0, max(limit - 1, 0))
 
     async def trades(
-        self, portfolio_id: int = 1, since: datetime | None = None, limit: int = 100
+        self, portfolio_id: int | None = None, since: datetime | None = None, limit: int = 100
     ) -> list[Trade]:
+        portfolio_id = await self._resolve_portfolio_id(portfolio_id)
         return await self._queries.trades(portfolio_id, since, limit)
 
     async def risk(self, limit: int = 50) -> list[Any]:

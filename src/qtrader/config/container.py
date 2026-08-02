@@ -345,6 +345,7 @@ class Container:
                 risks=c.resolve(RiskRepository),
                 cache=c.resolve(Cache),
                 stocks=c.resolve(StockRepository),
+                portfolio_service=portfolio_service,
             ),
         )
 

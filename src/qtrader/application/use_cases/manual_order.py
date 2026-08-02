@@ -44,6 +44,10 @@ class OrderRejectedError(Exception):
         super().__init__("; ".join(reasons))
 
 
+class NoPriceDataError(Exception):
+    """No market data is available for the requested symbol."""
+
+
 @dataclass(frozen=True, slots=True)
 class ManualOrderRequest:
     symbol: str
@@ -105,7 +109,10 @@ class ManualOrder:
 
         bar = await self._prices.latest(symbol, Interval.D1)
         if bar is None:
-            raise ValueError(f"no price data for {symbol}")
+            raise NoPriceDataError(
+                f"no price data for {symbol} — run the data agent or add {symbol} "
+                "to the watchlist first"
+            )
         entry = bar.close
 
         await self._check_risk(

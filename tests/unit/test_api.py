@@ -88,6 +88,9 @@ class FakePortfolioRepository(PortfolioRepository):
             portfolio_id=1,
         )
 
+    async def first(self) -> Portfolio | None:
+        return await self.get(1)
+
     async def save(self, portfolio) -> Portfolio:
         return portfolio
 
@@ -105,6 +108,8 @@ class FakeEventRepository(EventRepository):
 
 class FakeContainer:
     def __init__(self) -> None:
+        from qtrader.application.services.portfolio_service import PortfolioService
+
         self._settings = Settings(_env_file=None, api_key=API_KEY)
         self._services: dict[type, object] = {
             Settings: self._settings,
@@ -112,6 +117,7 @@ class FakeContainer:
             PriceRepository: FakePriceRepository(),
             PortfolioRepository: FakePortfolioRepository(),
             EventRepository: FakeEventRepository(),
+            PortfolioService: PortfolioService(FakePortfolioRepository()),
         }
 
     def resolve(self, service_type: type) -> object:
