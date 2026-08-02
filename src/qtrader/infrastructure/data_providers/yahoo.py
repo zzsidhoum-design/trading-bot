@@ -15,6 +15,11 @@ import httpx
 
 from qtrader.domain.ports import MarketDataProvider
 from qtrader.domain.value_objects import Interval, PriceBar
+from qtrader.infrastructure.resilience import (
+    CircuitBreaker,
+    CircuitOpenError,
+    retry_async,
+)
 
 DEFAULT_BASE_URL = "https://query1.finance.yahoo.com"
 
@@ -78,10 +83,12 @@ class YahooFinanceProvider(MarketDataProvider):
         base_url: str = DEFAULT_BASE_URL,
         timeout_seconds: float = 15.0,
         client: httpx.AsyncClient | None = None,
+        circuit: CircuitBreaker | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = httpx.Timeout(timeout_seconds)
         self._client = client
+        self._circuit = circuit or CircuitBreaker(name="yahoo")
 
     def _transport(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -92,13 +99,26 @@ class YahooFinanceProvider(MarketDataProvider):
             )
         return self._client
 
+    @retry_async()
+    async def _request_chart(
+        self, symbol: str, params: dict[str, Any]
+    ) -> httpx.Response:
+        response = await self._transport().get(
+            f"/v8/finance/chart/{symbol}", params=params
+        )
+        response.raise_for_status()
+        return response
+
     async def _chart(
         self, symbol: str, *, interval: Interval, params: dict[str, Any]
     ) -> list[PriceBar]:
         params = {"interval": interval.value, **params}
         try:
-            response = await self._transport().get(f"/v8/finance/chart/{symbol}", params=params)
-            response.raise_for_status()
+            response = await self._circuit.call(
+                lambda: self._request_chart(symbol, params)
+            )
+        except CircuitOpenError as exc:
+            raise RuntimeError(f"yahoo circuit open for {symbol}") from exc
         except httpx.HTTPError as exc:
             raise RuntimeError(f"yahoo chart request failed for {symbol}: {exc}") from exc
         try:

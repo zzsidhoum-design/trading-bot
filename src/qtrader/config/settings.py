@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Any
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -108,11 +109,25 @@ class Settings(BaseSettings):
     gate_max_drawdown: float = 0.25
     gate_min_total_return: float = 0.0
 
+    # Phase 8 — hardening: resilience + worker sharding
+    provider_failure_threshold: int = 5
+    provider_reset_timeout_seconds: float = 30.0
+    worker_shards: int = 1
+    worker_shard_id: int = 0
+
     @field_validator("postgres_port")
     @classmethod
     def _port_range(cls, value: int) -> int:
         if not 1 <= value <= 65535:
             raise ValueError("postgres_port out of range")
+        return value
+
+    @field_validator("worker_shard_id")
+    @classmethod
+    def _shard_in_range(cls, value: int, info: Any) -> int:
+        shards = info.data.get("worker_shards", 1)
+        if not 0 <= value < max(shards, 1):
+            raise ValueError("worker_shard_id must be in [0, worker_shards)")
         return value
 
     @property

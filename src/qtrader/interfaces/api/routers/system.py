@@ -16,7 +16,12 @@ from qtrader.interfaces.api.dependencies import (
     get_settings,
     require_api_key,
 )
-from qtrader.interfaces.api.schemas import HealthCheck, ModeToggle, SystemStatus
+from qtrader.interfaces.api.schemas import (
+    CircuitBreakerSnapshot,
+    HealthCheck,
+    ModeToggle,
+    SystemStatus,
+)
 
 router = APIRouter(prefix="/api/v1", tags=["system"])
 
@@ -42,6 +47,15 @@ async def system_status(settings: Settings = Depends(get_settings)) -> SystemSta
         live_enabled=settings.live_enabled,
         agents=default_registry().names,
     )
+
+
+@router.get(
+    "/system/resilience",
+    response_model=list[CircuitBreakerSnapshot],
+    dependencies=[Depends(require_api_key)],
+)
+async def resilience(container: Container = Depends(get_container)) -> list[CircuitBreakerSnapshot]:
+    return [CircuitBreakerSnapshot.model_validate(s) for s in container.circuit_breakers()]
 
 
 @router.post(

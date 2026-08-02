@@ -16,6 +16,14 @@ from qtrader.config.settings import Settings
 from qtrader.domain.value_objects import Interval
 
 
+def _owned(symbols: list[str]) -> list[str]:
+    """Filter ``symbols`` down to this worker's shard (see application/services/shard.py)."""
+    from qtrader.application.services.shard import owned_symbols
+
+    settings = Settings()
+    return owned_symbols(symbols, settings.worker_shard_id, settings.worker_shards)
+
+
 async def heartbeat(ctx: dict[str, Any]) -> str:
     """Prove the worker is alive: round-trip through the shared cache/DB."""
     from redis.asyncio import Redis
@@ -45,6 +53,7 @@ async def backfill(
     agent = container.resolve(DataAgent)
     iv = Interval(interval) if interval else settings.scan_interval
     symbols = [symbol] if symbol else settings.watchlist_symbols
+    symbols = _owned(symbols)
     end = datetime.now(UTC)
     start = end - timedelta(days=days or settings.backfill_days)
     total = 0
@@ -78,6 +87,7 @@ async def analyze_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -
     if symbols is None:
         top = await scanner.scan_all()
         symbols = [c.symbol for c in top]
+    symbols = _owned(symbols)
     technical = await container.resolve(TechnicalAgent).analyze_candidates(symbols)
     news = await container.resolve(NewsAgent).analyze_candidates(symbols)
     fundamental = await container.resolve(FundamentalAgent).analyze_candidates(symbols)
@@ -98,6 +108,7 @@ async def predict_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -
     if symbols is None:
         top = await scanner.scan_all()
         symbols = [c.symbol for c in top]
+    symbols = _owned(symbols)
     predicted = await container.resolve(PredictionAgent).predict_candidates(symbols)
     return f"predicted {predicted}/{len(symbols)} symbols"
 
@@ -113,6 +124,7 @@ async def decide_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) ->
     if symbols is None:
         top = await scanner.scan_all()
         symbols = [c.symbol for c in top]
+    symbols = _owned(symbols)
     decided = await container.resolve(ChiefAgent).decide_candidates(symbols)
     return f"decided {decided}/{len(symbols)} symbols"
 
@@ -131,8 +143,7 @@ async def risk_cycle(ctx: dict[str, Any]) -> str:
     decisions = container.resolve(DecisionRepository)
     top = await scanner.scan_all()
     approved = rejected = 0
-    for candidate in top:
-        symbol = candidate.symbol
+    for symbol in _owned([c.symbol for c in top]):
         latest = await decisions.latest_for_symbol(symbol, limit=1)
         if not latest or latest[0].decision is Decision.HOLD:
             continue

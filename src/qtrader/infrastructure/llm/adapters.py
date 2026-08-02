@@ -16,6 +16,7 @@ import httpx
 from pydantic import TypeAdapter, ValidationError
 
 from qtrader.domain.ports import LLMClient
+from qtrader.infrastructure.resilience import retry_async
 
 T = TypeVar("T")
 
@@ -56,14 +57,21 @@ class OpenAILLMClient(LLMClient):
             "Content-Type": "application/json",
         }
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(self._base_url, json=body, headers=headers)
-            response.raise_for_status()
+            response = await self._post(client, body, headers)
             content = response.json()["choices"][0]["message"]["content"]
         adapter = TypeAdapter(schema)
         try:
             return adapter.validate_json(content)
         except ValidationError as exc:
             raise ValueError(f"LLM output failed schema validation: {exc}") from exc
+
+    @retry_async()
+    async def _post(
+        self, client: httpx.AsyncClient, body: dict[str, object], headers: dict[str, str]
+    ) -> httpx.Response:
+        response = await client.post(self._base_url, json=body, headers=headers)
+        response.raise_for_status()
+        return response
 
 
 class KeywordLLMClient(LLMClient):

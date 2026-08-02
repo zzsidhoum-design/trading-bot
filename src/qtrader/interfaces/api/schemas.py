@@ -22,6 +22,13 @@ class SystemStatus(BaseModel):
     agents: list[str] = Field(default_factory=list)
 
 
+class CircuitBreakerSnapshot(BaseModel):
+    name: str
+    state: str
+    consecutive_failures: int
+    reset_timeout_seconds: float
+
+
 class ModeToggle(BaseModel):
     mode: str
 

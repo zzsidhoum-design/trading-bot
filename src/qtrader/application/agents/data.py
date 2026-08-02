@@ -56,7 +56,11 @@ class DataAgent(AgentBase):
         """Fetch + clean + persist a historical range; publish completion."""
         end = end.astimezone(UTC)
         start = start.astimezone(UTC)
-        raw = await self._provider.fetch_bars(symbol, interval, start, end)
+        try:
+            raw = await self._provider.fetch_bars(symbol, interval, start, end)
+        except RuntimeError as exc:
+            logger.warning("data.backfill.provider_down", symbol=symbol, error=str(exc))
+            return 0
         report = self._cleaner.clean(raw, now=end, reject_stale=False)
         inserted = await self._prices.upsert_bars(report.kept)
         logger.info(

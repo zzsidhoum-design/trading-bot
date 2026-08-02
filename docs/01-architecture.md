@@ -110,7 +110,7 @@ qtrader/
 - **Scheduling:** `arq` workers for periodic jobs (price polling per interval, news polling, fundamentals refresh, nightly model retraining, backtest reports).
 - **Idempotency:** events carry `event_id`; consumers dedupe. Order submission guarded by Redis distributed lock (per portfolio+symbol).
 - **Backpressure:** bounded in-process queues; slow consumers drop noisy events (`PriceUpdated` aggregated into a per-minute tick batch) rather than blocking the ingest path.
-- **Retries & circuit breakers:** `tenacity` with exponential backoff + jitter on external HTTP calls; circuit breaker per external provider to fail fast instead of hammering a dead API.
+- **Retries & circuit breakers:** `tenacity` with exponential backoff + jitter on external HTTP calls; circuit breaker per external provider to fail fast instead of hammering a dead API. Implemented in `infrastructure/resilience/` — see `docs/07-hardening.md`.
 
 ---
 
@@ -119,6 +119,7 @@ qtrader/
 - Domain raises typed exceptions (`DomainError`, `RiskRejected`, `InsufficientLiquidity`, `BrokerUnavailable`).
 - Application catches, logs structured (structlog, includes `event_id`, `stock_id`, `agent`), and emits error events.
 - Infrastructure translates provider-specific exceptions into domain ones. External provider degradation → degraded-mode flag → Chief Agent excludes that signal source.
+- External adapters retry only transient failures (network, 5xx, 429) and short-circuit through per-service circuit breakers (`provider_failure_threshold`, `provider_reset_timeout_seconds`); breaker state is readable at `GET /api/v1/system/resilience`.
 
 ---
 
@@ -144,4 +145,4 @@ qtrader/
 
 1. **Single process (dev/test):** in-process event bus, local Postgres/Redis via Docker Compose.
 2. **Distributed:** multiple `arq` workers, Redis Pub/Sub bus, partitioned Postgres (`prices` partitioned by month), read replicas for dashboard queries.
-3. **Many universes:** the worker pool is sharded by symbol hash; the scanner runs per-shard; results merged in Redis sorted set (top movers).
+3. **Many universes:** the worker pool is sharded by symbol hash (`worker_shards` / `worker_shard_id`); each periodic task filters its universe via `shard.owned_symbols`, the scanner runs per-shard, and results are merged in the Redis sorted set (top movers). `num_shards <= 1` is full passthrough, so a single worker is unchanged. See `docs/07-hardening.md`.

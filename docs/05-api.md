@@ -22,6 +22,7 @@
 | GET | `/api/v1/health` | liveness + dependency health (db, redis, broker) |
 | GET | `/api/v1/system/status` | mode (backtest/paper/live), agents running/errors, graduation state |
 | GET | `/api/v1/system/events?type=&from=&to=` | event journal (outbox) with pagination |
+| GET | `/api/v1/system/resilience` | circuit-breaker snapshots (`name`, `state`, `consecutive_failures`, `reset_timeout_seconds`) per external service |
 | POST | `/api/v1/system/mode` | toggle {backtest, paper} (live requires separate gate) |
 
 ## 2. Dashboard Reads

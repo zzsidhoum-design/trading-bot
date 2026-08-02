@@ -16,6 +16,7 @@ import httpx
 from qtrader.domain.entities import Order
 from qtrader.domain.ports import BrokerGateway
 from qtrader.domain.value_objects import OrderFill, OrderStatus, OrderType
+from qtrader.infrastructure.resilience import retry_async
 
 _PAPER_URL = "https://paper-api.alpaca.markets"
 _LIVE_URL = "https://api.alpaca.markets"
@@ -47,6 +48,7 @@ class AlpacaBroker(BrokerGateway):
             timeout=10,
         )
 
+    @retry_async()
     async def submit_order(self, order: Order) -> str:
         payload: dict[str, Any] = {
             "symbol": order.symbol or "",
@@ -66,12 +68,14 @@ class AlpacaBroker(BrokerGateway):
         data = response.json()
         return str(data["id"])
 
+    @retry_async()
     async def cancel_order(self, broker_order_id: str) -> None:
         await self._client.delete(f"/v2/orders/{broker_order_id}")
 
     async def close(self) -> None:
         await self._client.aclose()
 
+    @retry_async()
     async def modify_brackets(
         self, position_id: str, stop_loss: object, take_profit: object
     ) -> None:
@@ -83,6 +87,7 @@ class AlpacaBroker(BrokerGateway):
             },
         )
 
+    @retry_async()
     async def get_order_status(self, broker_order_id: str) -> OrderFill:
         response = await self._client.get(f"/v2/orders/{broker_order_id}")
         response.raise_for_status()

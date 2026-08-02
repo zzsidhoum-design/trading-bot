@@ -18,6 +18,17 @@
 
 **Coverage gate:** ≥ 90% on `application/` and `domain/`; ≥ 70% overall. Enforced in CI.
 
+### Fault injection & load
+
+Phase 8 adds failure-path coverage (see `docs/07-hardening.md`):
+
+- `tests/unit/test_resilience.py` — circuit-breaker open/half-open/recovery, token bucket, transient-only retries.
+- `tests/unit/test_yahoo_resilience.py` — provider retries + breaker trip/recovery against `MockTransport`.
+- `tests/unit/test_ws_fanout.py` — concurrent fan-out to 8 WS clients + topic isolation.
+- `tests/unit/test_shard.py` — shard determinism and balance.
+- `tests/integration/test_hardening.py` — a `FailingBroker` that always raises `BrokerUnavailable`; orders are rejected as `REJECTED` events (graceful degradation) and breaker snapshots are reachable through the live container.
+- `scripts/load_test.py` — asyncio/httpx load harness (requests/sec + latency percentiles); run with `--concurrency`/`--duration`/`--path`.
+
 ## 2. Backtesting Engine
 
 - `BacktestRunner` replays stored historical bars (via `PriceRepository.history`) through the **production analysis code**: the same `IndicatorEngine` signals and `RiskCalculator` sizing used live — no special-casing in the strategy.

@@ -105,6 +105,7 @@ from qtrader.infrastructure.database.session import build_engine, build_session_
 from qtrader.infrastructure.eventbus import InProcessEventBus
 from qtrader.infrastructure.llm.adapters import KeywordLLMClient, OpenAILLMClient
 from qtrader.infrastructure.news.feed import RSSNewsProvider
+from qtrader.infrastructure.resilience import CircuitBreakerRegistry
 
 T = TypeVar("T")
 
@@ -120,6 +121,7 @@ class Container:
         self._provider: YahooFinanceProvider | None = None
         self._news_provider: RSSNewsProvider | None = None
         self._broker: BrokerGateway | None = None
+        self._breakers = CircuitBreakerRegistry()
         self._build()
 
     def _build(self) -> None:
@@ -173,7 +175,13 @@ class Container:
         cleaner = BarCleaner()
         c.register(BarCleaner, instance=cleaner)
 
-        provider = YahooFinanceProvider()
+        provider = YahooFinanceProvider(
+            circuit=self._breakers.get_or_create(
+                "yahoo",
+                failure_threshold=self._settings.provider_failure_threshold,
+                reset_timeout_seconds=self._settings.provider_reset_timeout_seconds,
+            )
+        )
         self._provider = provider
         c.register(MarketDataProvider, instance=provider)
 
@@ -437,6 +445,10 @@ class Container:
             return True
         except Exception:
             return False
+
+    def circuit_breakers(self) -> list[dict[str, object]]:
+        """Snapshot of every registered circuit breaker (for observability)."""
+        return self._breakers.snapshots()
 
     async def aclose(self) -> None:
         """Best-effort release of engine pool, redis and provider connections."""
