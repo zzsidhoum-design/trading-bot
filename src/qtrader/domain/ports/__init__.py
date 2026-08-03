@@ -345,6 +345,14 @@ class EventRepository(ABC):
         self, event_uuid: str | None, event_type: str | None, limit: int
     ) -> list[DomainEvent]: ...
 
+    @abstractmethod
+    async def count_by_type(self, limit: int = 1000) -> dict[str, int]:
+        """Counts of the ``limit`` most recent events, grouped by type.
+
+        Cheap alternative to loading rows just to tally them (used by
+        ``/system/metrics`` monitoring).
+        """
+
 
 class BacktestRepository(ABC):
     """Persistence for backtest runs (``backtest_runs``)."""

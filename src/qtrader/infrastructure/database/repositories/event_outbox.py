@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from qtrader.domain.events import DomainEvent
@@ -74,3 +74,16 @@ class SQLAlchemyEventRepository(EventRepository):
                 if event is not None:
                     events.append(event)
             return events
+
+    async def count_by_type(self, limit: int = 1000) -> dict[str, int]:
+        async with self._session_factory() as session:
+            recent = (
+                select(EventRecordModel.type)
+                .order_by(EventRecordModel.occurred_at.desc(), EventRecordModel.id.desc())
+                .limit(limit)
+                .subquery()
+            )
+            rows = await session.execute(
+                select(recent.c.type, func.count()).group_by(recent.c.type)
+            )
+            return {type_name: int(count) for type_name, count in rows}

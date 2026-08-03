@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import secrets
+
 from fastapi import Depends, Header, HTTPException, status
 
 from qtrader.application.services.backtest import BacktestRunner
@@ -121,8 +123,12 @@ def require_api_key(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     settings: Settings = Depends(get_settings),
 ) -> None:
-    """Reject requests without the configured API key."""
+    """Reject requests without the configured API key.
+
+    Uses a constant-time comparison so a remote attacker cannot measure how
+    many leading characters of the key they guessed correctly.
+    """
     if settings.api_key == "change-me" or x_api_key is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid API key")
-    if x_api_key != settings.api_key:
+    if not secrets.compare_digest(x_api_key.encode(), settings.api_key.encode()):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid API key")

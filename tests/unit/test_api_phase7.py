@@ -58,6 +58,9 @@ class FakeEventRepository(EventRepository):
     async def list_after(self, event_uuid, event_type, limit) -> list:
         return list(self.events)[:limit]
 
+    async def count_by_type(self, limit=1000) -> dict[str, int]:
+        return {e.type_name: self.events.count(e) for e in set(self.events)}
+
 
 class FakeContainer:
     def __init__(self) -> None:

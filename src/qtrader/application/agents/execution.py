@@ -156,7 +156,23 @@ class ExecutionAgent(AgentBase):
             )
         )
 
-        fill = await self._broker.get_order_status(broker_order_id)
+        try:
+            fill = await self._broker.get_order_status(broker_order_id)
+        except Exception as exc:  # noqa: BLE001
+            self._logger.warning(
+                "execution.poll_failed", broker_order_id=broker_order_id, error=str(exc)
+            )
+            failed = replace(submitted, status=OrderStatus.REJECTED)
+            await self._orders.save(failed)
+            await self._bus.publish(
+                OrderStatusChanged(
+                    order_id=str(failed.order_id),
+                    status=OrderStatus.REJECTED,
+                    detail=str(exc),
+                )
+            )
+            return broker_order_id
+
         if fill.status is OrderStatus.FILLED:
             await self._apply_fill(submitted, fill)
         elif fill.status is OrderStatus.REJECTED:

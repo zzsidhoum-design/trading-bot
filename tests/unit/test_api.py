@@ -107,6 +107,9 @@ class FakeEventRepository(EventRepository):
     async def list_after(self, event_uuid, event_type, limit) -> list:
         return list(self._events)[:limit]
 
+    async def count_by_type(self, limit=1000) -> dict[str, int]:
+        return {e.type_name: self._events.count(e) for e in set(self._events)}
+
 
 class FakeContainer:
     def __init__(self) -> None:
@@ -178,6 +181,28 @@ async def test_health_requires_api_key(client: httpx.AsyncClient) -> None:
     body = resp.json()
     assert body["error"] == "http_error"
     assert body["detail"] == "invalid API key"
+
+
+@pytest.mark.asyncio
+async def test_wrong_api_key_is_rejected(client: httpx.AsyncClient) -> None:
+    resp = await client.get("/api/v1/health", headers={"X-API-Key": "wrong-key"})
+    assert resp.status_code == 401
+    assert resp.json()["error"] == "http_error"
+
+
+@pytest.mark.asyncio
+async def test_change_me_default_rejects_even_with_key() -> None:
+    container = FakeContainer()
+    container._settings = Settings(_env_file=None, api_key="change-me")
+    application = create_app()
+    application.dependency_overrides[get_container] = lambda: container
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/v1/health", headers={"X-API-Key": "whatever"})
+    assert resp.status_code == 401
+    assert resp.json()["error"] == "http_error"
 
 
 @pytest.mark.asyncio

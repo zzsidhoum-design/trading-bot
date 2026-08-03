@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from qtrader.domain.entities import Order
+from qtrader.domain.exceptions import NotFoundError
 from qtrader.domain.value_objects import (
     Money,
     OrderStatus,
@@ -52,3 +55,17 @@ async def test_fills_at_default_price_without_price_source() -> None:
     broker_order_id = await broker.submit_order(_order())
     fill = await broker.get_order_status(broker_order_id)
     assert fill.avg_fill_price == Decimal("50")
+
+
+async def test_unknown_order_raises_typed_not_found() -> None:
+    broker = PaperBroker()
+    with pytest.raises(NotFoundError, match="unknown broker order"):
+        await broker.get_order_status("paper-missing")
+
+
+async def test_cancelled_order_is_not_found() -> None:
+    broker = PaperBroker(default_price=Decimal("50"))
+    broker_order_id = await broker.submit_order(_order())
+    await broker.cancel_order(broker_order_id)
+    with pytest.raises(NotFoundError, match="unknown broker order"):
+        await broker.get_order_status(broker_order_id)

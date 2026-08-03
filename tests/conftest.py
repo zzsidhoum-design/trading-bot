@@ -36,6 +36,9 @@ class FakeEventRepository(EventRepository):
             events = [e for e in events if e.type_name == event_type]
         return events[:limit]
 
+    async def count_by_type(self, limit: int = 1000) -> dict[str, int]:
+        return {e.type_name: self.records.count(e) for e in set(self.records)}
+
 
 @pytest.fixture
 def fake_outbox() -> FakeEventRepository:

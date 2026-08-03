@@ -12,6 +12,7 @@ a client; topics match event type names case-insensitively as substrings, so
 from __future__ import annotations
 
 import asyncio
+import secrets
 from typing import Any
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -133,7 +134,9 @@ async def ws_live(
     api_key: str | None = Query(default=None),
 ) -> None:
     settings = Settings()
-    if settings.api_key == "change-me" or api_key != settings.api_key:
+    if settings.api_key == "change-me" or api_key is None or not secrets.compare_digest(
+        api_key.encode(), settings.api_key.encode()
+    ):
         await websocket.close(code=4401)
         return
     await _get_hub().connect(websocket, since, _parse_topics(topics))

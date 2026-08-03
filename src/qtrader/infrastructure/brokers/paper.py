@@ -6,6 +6,7 @@ import uuid
 from decimal import Decimal
 
 from qtrader.domain.entities import Order
+from qtrader.domain.exceptions import NotFoundError
 from qtrader.domain.ports import BrokerGateway, PriceRepository
 from qtrader.domain.value_objects import Interval, OrderFill, OrderStatus, OrderType
 
@@ -38,7 +39,9 @@ class PaperBroker(BrokerGateway):
         return None
 
     async def get_order_status(self, broker_order_id: str) -> OrderFill:
-        order = self._orders[broker_order_id]
+        order = self._orders.get(broker_order_id)
+        if order is None:
+            raise NotFoundError(f"unknown broker order {broker_order_id}")
         price = await self._fill_price(order)
         return OrderFill(
             broker_order_id=broker_order_id,

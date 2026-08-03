@@ -133,3 +133,38 @@ async def test_duplicate_proposal_is_idempotent() -> None:
     broker_order_id = await agent.execute(_proposal())
     assert broker_order_id is None
     assert len(orders._orders) == 1
+
+
+class _StatusFailingBroker:
+    async def submit_order(self, order) -> str:
+        return "brk-1"
+
+    async def get_order_status(self, broker_order_id: str):
+        raise RuntimeError("broker down")
+
+    async def cancel_order(self, broker_order_id: str) -> None:
+        return None
+
+    async def modify_brackets(self, position_id, stop_loss, take_profit) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+async def test_status_poll_failure_marks_order_rejected() -> None:
+    from qtrader.domain.events import OrderStatusChanged
+
+    agent, portfolios, orders, trades, bus = _agent()
+    agent._broker = _StatusFailingBroker()
+
+    broker_order_id = await agent.execute(_proposal())
+    assert broker_order_id == "brk-1"
+    assert [e.type_name for e in bus.published] == ["OrderSubmitted", "OrderStatusChanged"]
+
+    order = orders._orders[0]
+    assert order.status is OrderStatus.REJECTED
+    assert any(
+        isinstance(e, OrderStatusChanged) and e.status is OrderStatus.REJECTED
+        for e in bus.published
+    )

@@ -44,6 +44,9 @@ class InMemoryOutbox(EventRepository):
     async def list_after(self, event_uuid, event_type, limit):
         return list(self.records)[:limit]
 
+    async def count_by_type(self, limit=1000) -> dict[str, int]:
+        return {e.type_name: self.records.count(e) for e in set(self.records)}
+
 
 def _price_event(tick: int) -> PriceUpdated:
     return PriceUpdated(

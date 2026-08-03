@@ -31,6 +31,9 @@ class _FakeEventRepository(EventRepository):
                 result.append(event)
         return result[:limit]
 
+    async def count_by_type(self, limit=1000) -> dict[str, int]:
+        return {e.type_name: self._events.count(e) for e in set(self._events)}
+
 
 class _FakeWebSocket:
     def __init__(self) -> None:

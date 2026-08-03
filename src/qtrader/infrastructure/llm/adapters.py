@@ -16,7 +16,7 @@ import httpx
 from pydantic import TypeAdapter, ValidationError
 
 from qtrader.domain.ports import LLMClient
-from qtrader.infrastructure.resilience import retry_async
+from qtrader.infrastructure.resilience import TokenBucket, retry_async
 
 T = TypeVar("T")
 
@@ -37,12 +37,17 @@ class OpenAILLMClient(LLMClient):
         api_key: str,
         model: str = "gpt-4o-mini",
         base_url: str = OPENAI_COMPLETIONS_URL,
+        rate_limiter: TokenBucket | None = None,
     ) -> None:
         self._api_key = api_key
         self._model = model
         self._base_url = base_url
+        self._rate_limiter = rate_limiter or TokenBucket(
+            capacity=30, refill_rate_per_second=1.0, name="openai"
+        )
 
     async def complete_json(self, system_prompt: str, user_prompt: str, schema: type[T]) -> T:
+        await self._rate_limiter.wait()
         body = {
             "model": self._model,
             "messages": [

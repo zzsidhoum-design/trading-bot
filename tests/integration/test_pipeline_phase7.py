@@ -252,3 +252,53 @@ async def test_agent_metric_write_then_read(
     assert metrics[0].agent_name == "scanner"
     assert metrics[0].metric_name == "candidates"
     assert metrics[0].value == Decimal(7)
+
+
+@pytest.mark.asyncio
+async def test_event_outbox_counts_by_type(session_factory: async_sessionmaker) -> None:
+    from qtrader.domain.events import OrderFilled, PriceUpdated
+    from qtrader.infrastructure.database.repositories import SQLAlchemyEventRepository
+
+    events = SQLAlchemyEventRepository(session_factory)
+    await events.record(
+        PriceUpdated(
+            symbol="TSTS",
+            interval="1h",
+            ts="2026-08-02T12:00:00Z",
+            open="1",
+            high="1",
+            low="1",
+            close="1",
+            volume="1",
+        )
+    )
+    await events.record(
+        PriceUpdated(
+            symbol="TSTU",
+            interval="1h",
+            ts="2026-08-02T12:00:01Z",
+            open="1",
+            high="1",
+            low="1",
+            close="1",
+            volume="1",
+        )
+    )
+    await events.record(
+        OrderFilled(order_id="1", broker_order_id="brk", fill_price="1", fill_qty="1", fees="0")
+    )
+
+    counts = await events.count_by_type(limit=500)
+    assert counts["PriceUpdated"] >= 2
+    assert counts["OrderFilled"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_event_outbox_count_respects_limit(
+    session_factory: async_sessionmaker, seeded: int
+) -> None:
+    from qtrader.infrastructure.database.repositories import SQLAlchemyEventRepository
+
+    events = SQLAlchemyEventRepository(session_factory)
+    counts = await events.count_by_type(limit=1)
+    assert sum(counts.values()) == 1

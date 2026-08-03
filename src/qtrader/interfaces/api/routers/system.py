@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from contextlib import suppress
 from datetime import datetime
 
 from fastapi import APIRouter, Depends
@@ -78,12 +79,8 @@ async def system_metrics(
 ) -> SystemMetrics:
     """Process-level metrics snapshot for monitoring/alerting."""
     events_by_type: dict[str, int] = {}
-    try:
-        recent_events = await event_repo.list_after(None, None, 1000)
-        for event in recent_events:
-            events_by_type[event.type_name] = events_by_type.get(event.type_name, 0) + 1
-    except Exception:
-        pass
+    with suppress(Exception):
+        events_by_type = await event_repo.count_by_type(1000)
     return SystemMetrics(
         uptime_seconds=time.monotonic() - _PROCESS_START,
         mode=settings.qtrader_mode.value,
