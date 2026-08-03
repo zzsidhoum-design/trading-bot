@@ -256,3 +256,26 @@ async def test_empty_history_still_completes() -> None:
     assert result.summary.trades_count == 0
     assert result.run.final_capital is not None
     assert result.run.final_capital.amount == Decimal("100000")
+
+
+@pytest.mark.asyncio
+async def test_run_failure_marks_run_failed_and_relogs() -> None:
+    class _ExplodingPrices(FakePriceRepository):
+        async def history(self, symbol, interval, start=None, end=None, limit=500):
+            raise RuntimeError("upstream down")
+
+    logs = FakeSystemLogRepository()
+    runner, backtests, _ = _runner({"AAPL": []}, logs=logs)
+    runner._prices = _ExplodingPrices({})
+
+    with pytest.raises(RuntimeError, match="upstream down"):
+        await runner.run(
+            name="boom",
+            symbols=["AAPL"],
+            start=date(2026, 1, 1),
+            end=date(2026, 6, 1),
+            initial_capital=Decimal("100000"),
+        )
+
+    assert backtests.runs[-1].status == "failed"
+    assert any(e.level == "ERROR" and e.message == "run failed" for e in logs.entries)

@@ -20,7 +20,7 @@ from qtrader.domain.entities import (
     SystemLog,
     Trade,
 )
-from qtrader.domain.ports import DashboardQueries
+from qtrader.domain.ports import AgentMetricRepository, DashboardQueries
 from qtrader.domain.value_objects import (
     Money,
     PositionStatus,
@@ -42,9 +42,28 @@ def _utc(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
-class SQLAlchemyDashboardRepository(DashboardQueries):
+class SQLAlchemyDashboardRepository(DashboardQueries, AgentMetricRepository):
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
+
+    async def record(self, metric: AgentMetric) -> AgentMetric:
+        async with self._session_factory() as session:
+            row = AgentMetricModel(
+                agent_name=metric.agent_name,
+                metric_name=metric.metric_name,
+                value=metric.value,
+                window=metric.window,
+            )
+            session.add(row)
+            await session.commit()
+            return AgentMetric(
+                agent_name=metric.agent_name,
+                metric_name=metric.metric_name,
+                value=metric.value,
+                window=metric.window,
+                computed_at=metric.computed_at,
+                metric_id=row.id,
+            )
 
     async def positions(self, portfolio_id: int) -> list[Position]:
         async with self._session_factory() as session:

@@ -50,6 +50,7 @@ from qtrader.domain.events import (
     ScanCompleted,
 )
 from qtrader.domain.ports import (
+    AgentMetricRepository,
     AllocationPolicy,
     BacktestRepository,
     BrokerGateway,
@@ -184,7 +185,9 @@ class Container:
         c.register(BacktestRepository, instance=SQLAlchemyBacktestRepository(session_factory))
         c.register(PerformanceRepository, instance=SQLAlchemyPerformanceRepository(session_factory))
         c.register(SystemLogRepository, instance=SQLAlchemySystemLogRepository(session_factory))
-        c.register(DashboardQueries, instance=SQLAlchemyDashboardRepository(session_factory))
+        dashboard_repo = SQLAlchemyDashboardRepository(session_factory)
+        c.register(DashboardQueries, instance=dashboard_repo)
+        c.register(AgentMetricRepository, instance=dashboard_repo)
 
         c.register(
             UnitOfWorkFactory,

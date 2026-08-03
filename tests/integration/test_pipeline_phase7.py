@@ -229,3 +229,26 @@ async def test_dashboard_performance_and_models(
     models = await dashboard.models()
     assert models
     assert models[0].name == "dash-momentum"
+
+
+@pytest.mark.asyncio
+async def test_agent_metric_write_then_read(
+    session_factory: async_sessionmaker, seeded: int
+) -> None:
+    from decimal import Decimal
+
+    from qtrader.domain.entities import AgentMetric
+    from qtrader.domain.ports import AgentMetricRepository
+
+    dashboard = SQLAlchemyDashboardRepository(session_factory)
+    assert isinstance(dashboard, AgentMetricRepository)
+    saved = await dashboard.record(
+        AgentMetric(agent_name="scanner", metric_name="candidates", value=Decimal(7))
+    )
+    assert saved.metric_id is not None
+
+    metrics = await dashboard.agent_metrics(agent_name="scanner", limit=5)
+    assert metrics
+    assert metrics[0].agent_name == "scanner"
+    assert metrics[0].metric_name == "candidates"
+    assert metrics[0].value == Decimal(7)

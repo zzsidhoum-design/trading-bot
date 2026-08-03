@@ -15,6 +15,7 @@ orders left behind (e.g. created via the API or after a crash).
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 from arq import cron
@@ -84,6 +85,35 @@ def _owned(symbols: list[str]) -> list[str]:
     return owned_symbols(symbols, settings.worker_shard_id, settings.worker_shards)
 
 
+async def _record_agent_metric(
+    container: Any,
+    *,
+    agent_name: str,
+    metric_name: str,
+    value: Decimal,
+    window: str = "latest",
+) -> None:
+    """Best-effort dashboard metric write; never fails the job."""
+    from qtrader.config.logging import get_logger
+    from qtrader.domain.entities import AgentMetric
+    from qtrader.domain.ports import AgentMetricRepository
+
+    try:
+        repo = container.resolve(AgentMetricRepository)
+        await repo.record(
+            AgentMetric(
+                agent_name=agent_name,
+                metric_name=metric_name,
+                value=value,
+                window=window,
+            )
+        )
+    except Exception:
+        get_logger("qtrader.worker").warning(
+            "agent_metric.record_failed", agent=agent_name, metric=metric_name
+        )
+
+
 async def heartbeat(ctx: dict[str, Any]) -> str:
     """Prove the worker is alive: round-trip through the shared cache/DB."""
     from redis.asyncio import Redis
@@ -132,6 +162,12 @@ async def scan_cycle(ctx: dict[str, Any]) -> str:
     container = _container(ctx)
     scanner = container.resolve(MarketScanner)
     top = await scanner.scan_all()
+    await _record_agent_metric(
+        container,
+        agent_name="scanner",
+        metric_name="candidates",
+        value=Decimal(len(top)),
+    )
     return f"scan produced {len(top)} candidates"
 
 
@@ -174,6 +210,18 @@ async def train_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -> 
     if result is None:
         return "train: insufficient samples"
     acc = result.metrics.get("accuracy")
+    await _record_agent_metric(
+        container,
+        agent_name="trainer",
+        metric_name="accuracy",
+        value=Decimal(str(acc)) if acc is not None else Decimal(0),
+    )
+    await _record_agent_metric(
+        container,
+        agent_name="trainer",
+        metric_name="promoted",
+        value=Decimal(1) if result.promoted else Decimal(0),
+    )
     return (
         f"train: {result.name} v{result.version} "
         f"acc={acc} promoted={result.promoted}"
@@ -183,7 +231,6 @@ async def train_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -> 
 async def backtest_cycle(ctx: dict[str, Any]) -> str:
     """Phase 6: replay stored history, persist results, evaluate SystemGate."""
     from datetime import date
-    from decimal import Decimal
 
     from qtrader.application.services.backtest import BacktestParams, BacktestRunner
     from qtrader.application.services.system_gate import SystemGate
@@ -215,6 +262,12 @@ async def backtest_cycle(ctx: dict[str, Any]) -> str:
         settings.gate_strategy, TradingMode.PAPER
     )
     summary = result.summary
+    await _record_agent_metric(
+        container,
+        agent_name="backtester",
+        metric_name="total_return",
+        value=summary.total_return or Decimal(0),
+    )
     return (
         f"backtest: {summary.trades_count} trades, "
         f"return={summary.total_return} sharpe={summary.sharpe} "

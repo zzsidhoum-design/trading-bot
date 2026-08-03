@@ -42,7 +42,7 @@ class SystemMetrics(BaseModel):
 
 
 class SystemLogOut(BaseModel):
-    log_id: int
+    log_id: int | None = None
     level: str
     component: str | None = None
     message: str

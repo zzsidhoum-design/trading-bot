@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import httpx
@@ -16,9 +16,9 @@ from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskPolicy
 from qtrader.application.use_cases.manual_order import ManualOrder
 from qtrader.config.settings import Settings
-from qtrader.domain.entities import Portfolio, RegisteredModel, Stock, Trade
+from qtrader.domain.entities import BacktestRun, Portfolio, RegisteredModel, Stock, Trade
 from qtrader.domain.ports import EventRepository
-from qtrader.domain.value_objects import TradeSide, TradingMode
+from qtrader.domain.value_objects import Interval, Money, TradeSide, TradingMode
 from qtrader.interfaces.api.app import create_app
 from qtrader.interfaces.api.dependencies import get_container
 from tests.unit.fakes_phase7 import (
@@ -343,6 +343,124 @@ async def test_backtest_submit_and_list(client: httpx.AsyncClient) -> None:
     assert body["status"] == "completed"
     listed = await _get(client, "/api/v1/backtest")
     assert listed.status_code == 200
+
+
+def _backtest_run(run_id: int, name: str = "t") -> BacktestRun:
+    return BacktestRun(
+        name=name,
+        universe=["AAPL"],
+        start=date(2026, 1, 1),
+        end=date(2026, 6, 1),
+        initial_capital=Money("100000"),
+        interval=Interval.D1,
+        strategy="ensemble",
+        commission_bps=Decimal("1"),
+        slippage_bps=Decimal("0"),
+        run_id=run_id,
+        status="completed",
+        created_at=datetime(2026, 8, 1, tzinfo=UTC),
+        final_capital=Money("100000"),
+    )
+
+
+def _seeded_app(runs: list[BacktestRun]) -> FastAPI:
+    container = FakeContainer()
+    container.backtest_repo = FakeBacktestRepository(runs)
+    application = create_app()
+    application.dependency_overrides[get_container] = lambda: container
+    return application
+
+
+async def _post(
+    client: httpx.AsyncClient, path: str, body: dict
+) -> httpx.Response:
+    return await client.post(path, headers={"X-API-Key": API_KEY}, json=body)
+
+
+@pytest.mark.asyncio
+async def test_backtest_submit_blank_symbols_422() -> None:
+    transport = httpx.ASGITransport(app=_seeded_app([]))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        resp = await _post(
+            client,
+            "/api/v1/backtest",
+            {"name": "t", "symbols": ["   "], "start": "2026-01-01", "end": "2026-06-01"},
+        )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "validation_error"
+
+
+@pytest.mark.asyncio
+async def test_backtest_submit_invalid_interval_422() -> None:
+    transport = httpx.ASGITransport(app=_seeded_app([]))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        resp = await _post(
+            client,
+            "/api/v1/backtest",
+            {
+                "name": "t",
+                "symbols": ["AAPL"],
+                "start": "2026-01-01",
+                "end": "2026-06-01",
+                "interval": "not-an-interval",
+            },
+        )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "validation_error"
+
+
+@pytest.mark.asyncio
+async def test_backtest_get_missing_run_404() -> None:
+    transport = httpx.ASGITransport(app=_seeded_app([]))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        resp = await _get(client, "/api/v1/backtest/99")
+    assert resp.status_code == 404
+    body = resp.json()
+    assert body["error"] == "not_found"
+    assert body["detail"] == "backtest run not found"
+
+
+@pytest.mark.asyncio
+async def test_backtest_compare_two_runs() -> None:
+    runs = [_backtest_run(1), _backtest_run(2)]
+    transport = httpx.ASGITransport(app=_seeded_app(runs))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        resp = await _post(client, "/api/v1/backtest/1/compare", {"other_run_id": 2})
+    assert resp.status_code == 200
+    assert [r["run_id"] for r in resp.json()] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_backtest_compare_missing_run_404() -> None:
+    transport = httpx.ASGITransport(app=_seeded_app([_backtest_run(1)]))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        resp = await _post(client, "/api/v1/backtest/1/compare", {"other_run_id": 99})
+    assert resp.status_code == 404
+    assert resp.json()["error"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_backtest_list_filters_by_name() -> None:
+    runs = [_backtest_run(1, name="alpha"), _backtest_run(2, name="beta")]
+    transport = httpx.ASGITransport(app=_seeded_app(runs))
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        resp = await _get(client, "/api/v1/backtest?name=beta")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["name"] == "beta"
 
 
 @pytest.mark.asyncio

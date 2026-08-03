@@ -480,3 +480,10 @@ class DashboardQueries(ABC):
 
     @abstractmethod
     async def models(self) -> list[RegisteredModel]: ...
+
+
+class AgentMetricRepository(ABC):
+    """Write-side for per-agent dashboard metrics (``agent_metrics``)."""
+
+    @abstractmethod
+    async def record(self, metric: AgentMetric) -> AgentMetric: ...

@@ -380,7 +380,10 @@ class FakeBacktestRepository(BacktestRepository):
         return next((r for r in self.runs if r.run_id == run_id), None)
 
     async def latest(self, name=None, limit=20):
-        return self.runs[:limit]
+        runs = self.runs
+        if name is not None:
+            runs = [r for r in runs if r.name == name]
+        return runs[:limit]
 
 
 class FakeBacktestRunner:
