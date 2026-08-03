@@ -47,6 +47,12 @@
   <input id="apiKey" placeholder="API key" type="password" value="dev-local-key" />
   <select id="mode"></select>
   <button id="modeBtn" class="off">set mode</button>
+  <select id="cycleSel">
+    <option value="scan_cycle">scan</option>
+    <option value="execute_cycle">execute</option>
+    <option value="backtest_cycle">backtest</option>
+  </select>
+  <button id="runBtn">run now</button>
   <span id="conn" class="muted">ws: --</span>
 </header>
 <div class="container">
@@ -241,6 +247,20 @@ $("modeBtn").onclick = async () => {
     $("modeBtn").textContent = "error";
     alert(e.message);
   }
+};
+
+$("runBtn").onclick = async () => {
+  $("runBtn").textContent = "…";
+  const cycle = $("cycleSel").value;
+  try {
+    const r = await api("/api/v1/system/run", { method: "POST", body: JSON.stringify({ mode: cycle }) });
+    $("runBtn").textContent = "queued " + cycle;
+    $("conn").textContent = "queued job " + (r.job_id || "?");
+  } catch (e) {
+    $("runBtn").textContent = "error";
+    alert(e.message);
+  }
+  setTimeout(() => { $("runBtn").textContent = "run now"; }, 3000);
 };
 
 $("oGo").onclick = async () => {

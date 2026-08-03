@@ -379,3 +379,77 @@ async def test_system_logs_filters_by_level_and_component() -> None:
 
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_system_run_enqueues_cycle() -> None:
+    from qtrader.interfaces.api.dependencies import get_enqueue_job
+
+    calls: list[str] = []
+
+    async def fake_enqueue(job_name: str) -> str | None:
+        calls.append(job_name)
+        return f"job-{job_name}"
+
+    application = create_app()
+    application.dependency_overrides[get_container] = lambda: FakeContainer()
+    application.dependency_overrides[get_enqueue_job] = lambda: fake_enqueue
+
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/system/run",
+            headers={"X-API-Key": API_KEY},
+            json={"mode": "scan_cycle"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mode"] == "scan_cycle"
+    assert body["job_id"] == "job-scan_cycle"
+    assert calls == ["scan_cycle"]
+
+
+@pytest.mark.asyncio
+async def test_system_run_defaults_to_scan_cycle() -> None:
+    from qtrader.interfaces.api.dependencies import get_enqueue_job
+
+    calls: list[str] = []
+
+    async def fake_enqueue(job_name: str) -> str | None:
+        calls.append(job_name)
+        return "job-1"
+
+    application = create_app()
+    application.dependency_overrides[get_container] = lambda: FakeContainer()
+    application.dependency_overrides[get_enqueue_job] = lambda: fake_enqueue
+
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/api/v1/system/run", headers={"X-API-Key": API_KEY}, json={})
+
+    assert resp.status_code == 200
+    assert resp.json()["mode"] == "scan_cycle"
+    assert calls == ["scan_cycle"]
+
+
+@pytest.mark.asyncio
+async def test_system_run_rejects_unknown_cycle() -> None:
+    from qtrader.interfaces.api.dependencies import get_enqueue_job
+
+    async def fake_enqueue(job_name: str) -> str | None:
+        return "job-1"
+
+    application = create_app()
+    application.dependency_overrides[get_container] = lambda: FakeContainer()
+    application.dependency_overrides[get_enqueue_job] = lambda: fake_enqueue
+
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/api/v1/system/run",
+            headers={"X-API-Key": API_KEY},
+            json={"mode": "rm -rf"},
+        )
+
+    assert resp.status_code == 422

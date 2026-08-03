@@ -25,6 +25,7 @@
 | GET | `/api/v1/system/logs?level=&component=&limit=` | recent `system_logs` audit/journal rows |
 | GET | `/api/v1/system/events?type=&from=&to=&limit=` | event journal (outbox) with pagination |
 | GET | `/api/v1/system/resilience` | circuit-breaker snapshots (`name`, `state`, `consecutive_failures`, `reset_timeout_seconds`) per external service |
+| POST | `/api/v1/system/run` | enqueue a worker cycle now (`mode`: backfill, scan_cycle, execute_cycle, train_cycle, backtest_cycle) → runs on its own cron otherwise |
 | POST | `/api/v1/system/mode` | toggle {backtest, paper} (live requires separate gate) |
 
 ## 2. Dashboard Reads

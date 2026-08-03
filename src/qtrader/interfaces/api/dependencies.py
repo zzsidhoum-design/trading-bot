@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+from collections.abc import Awaitable, Callable
 
 from fastapi import Depends, Header, HTTPException, status
 
@@ -117,6 +118,29 @@ def get_portfolio_service(
 
 def get_manual_order(container: Container = Depends(get_container)) -> ManualOrder:
     return container.resolve(ManualOrder)
+
+
+EnqueueJob = Callable[[str], Awaitable[str | None]]
+
+
+def get_enqueue_job(settings: Settings = Depends(get_settings)) -> EnqueueJob:
+    """Provider for the ``/system/run`` control: enqueues an arq worker job.
+
+    Override in tests with a fake to assert the requested cycle name without
+    requiring a live Redis/worker.
+    """
+    from arq import create_pool
+    from arq.connections import RedisSettings
+
+    async def _enqueue(job_name: str) -> str | None:
+        pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        try:
+            job = await pool.enqueue_job(job_name)
+        finally:
+            await pool.aclose()
+        return job.job_id if job is not None else None
+
+    return _enqueue
 
 
 def require_api_key(

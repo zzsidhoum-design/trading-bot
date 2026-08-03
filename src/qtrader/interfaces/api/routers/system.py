@@ -5,8 +5,10 @@ from __future__ import annotations
 import time
 from contextlib import suppress
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from qtrader.config.container import Container
 from qtrader.config.settings import Settings
@@ -14,7 +16,9 @@ from qtrader.domain.exceptions import ValidationError
 from qtrader.domain.ports import EventRepository, SystemLogRepository
 from qtrader.domain.value_objects import TradingMode
 from qtrader.interfaces.api.dependencies import (
+    EnqueueJob,
     get_container,
+    get_enqueue_job,
     get_event_repository,
     get_settings,
     get_system_log_repository,
@@ -138,6 +142,35 @@ async def toggle_mode(
         raise ValidationError("live mode requires ENABLE_LIVE_TRADING=true")
     settings.qtrader_mode = mode
     return SystemStatus(mode=settings.qtrader_mode.value, live_enabled=settings.live_enabled)
+
+
+_SAFE_CYCLES = {"backfill", "scan_cycle", "execute_cycle", "train_cycle", "backtest_cycle"}
+
+
+class RunCycle(BaseModel):
+    mode: Literal["backfill", "scan_cycle", "execute_cycle", "train_cycle", "backtest_cycle"] = (
+        "scan_cycle"
+    )
+    job_id: str | None = None
+
+
+@router.post(
+    "/system/run",
+    response_model=RunCycle,
+    dependencies=[Depends(require_api_key)],
+)
+async def run_cycle(
+    body: RunCycle,
+    settings: Settings = Depends(get_settings),
+    enqueue: EnqueueJob = Depends(get_enqueue_job),
+) -> RunCycle:
+    """Enqueue a worker cycle to run now (rather than on its cron schedule)."""
+    if body.mode not in _SAFE_CYCLES:
+        raise ValidationError(f"unsafe cycle: {body.mode}")
+    job_id = await enqueue(body.mode)
+    if job_id is None:
+        raise ValidationError("worker queue unavailable")
+    return RunCycle(mode=body.mode, job_id=job_id)
 
 
 @router.get(
