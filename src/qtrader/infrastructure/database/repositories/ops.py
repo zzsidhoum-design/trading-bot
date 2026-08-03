@@ -229,6 +229,32 @@ class SQLAlchemySystemLogRepository(SystemLogRepository):
             await session.commit()
             return replace(entry, log_id=row.id)
 
+    async def recent(
+        self, level: str | None = None, component: str | None = None, limit: int = 50
+    ) -> list[SystemLog]:
+        async with self._session_factory() as session:
+            stmt = (
+                select(SystemLogModel)
+                .order_by(SystemLogModel.created_at.desc())
+                .limit(min(limit, 500))
+            )
+            if level is not None:
+                stmt = stmt.where(SystemLogModel.level == level.upper())
+            if component is not None:
+                stmt = stmt.where(SystemLogModel.component == component)
+            rows = await session.scalars(stmt)
+            return [
+                SystemLog(
+                    level=row.level,
+                    component=row.component,
+                    message=row.message,
+                    context=row.context or {},
+                    created_at=row.created_at,
+                    log_id=row.id,
+                )
+                for row in rows
+            ]
+
 
 __all__ = [
     "SQLAlchemyBacktestRepository",

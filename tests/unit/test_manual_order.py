@@ -14,6 +14,7 @@ from qtrader.application.use_cases.manual_order import (
     ManualOrderRequest,
     NoPriceDataError,
     OrderRejectedError,
+    ValidationError,
 )
 from qtrader.config.settings import Settings
 from qtrader.domain.entities import Portfolio, Stock
@@ -144,7 +145,7 @@ async def test_submit_rejects_unknown_symbol_via_price_missing() -> None:
 
 async def test_submit_live_requires_live_enabled() -> None:
     manual, _, _, _ = _build(mode=TradingMode.LIVE)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValidationError, match="ENABLE_LIVE_TRADING"):
         await manual.submit(
             ManualOrderRequest(symbol="AAPL", side="BUY", quantity=10)
         )

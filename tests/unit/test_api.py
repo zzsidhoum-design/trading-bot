@@ -17,10 +17,12 @@ from qtrader.domain.ports import (
     PortfolioRepository,
     PriceRepository,
     StockRepository,
+    SystemLogRepository,
 )
 from qtrader.domain.value_objects import Interval, Money, PriceBar, TradingMode
 from qtrader.interfaces.api.app import create_app
 from qtrader.interfaces.api.dependencies import get_container
+from tests.unit.fakes_phase6 import FakeSystemLogRepository
 
 API_KEY = "test-key"
 
@@ -117,6 +119,7 @@ class FakeContainer:
             PriceRepository: FakePriceRepository(),
             PortfolioRepository: FakePortfolioRepository(),
             EventRepository: FakeEventRepository(),
+            SystemLogRepository: FakeSystemLogRepository(),
             PortfolioService: PortfolioService(FakePortfolioRepository()),
         }
 
@@ -127,6 +130,9 @@ class FakeContainer:
         return True
 
     async def cache_healthy(self) -> bool:
+        return True
+
+    async def worker_healthy(self) -> bool:
         return True
 
     def circuit_breakers(self) -> list[dict[str, object]]:
@@ -169,6 +175,58 @@ async def _get(client: httpx.AsyncClient, path: str) -> httpx.Response:
 async def test_health_requires_api_key(client: httpx.AsyncClient) -> None:
     resp = await client.get("/api/v1/health")
     assert resp.status_code == 401
+    body = resp.json()
+    assert body["error"] == "http_error"
+    assert body["detail"] == "invalid API key"
+
+
+@pytest.mark.asyncio
+async def test_invalid_query_param_returns_422_envelope(client: httpx.AsyncClient) -> None:
+    resp = await _get(client, "/api/v1/stocks/AAPL/history?limit=abc")
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["error"] == "validation_error"
+    assert isinstance(body["detail"], list)
+
+
+@pytest.mark.asyncio
+async def test_invalid_agent_interval_returns_422_envelope(
+    client: httpx.AsyncClient,
+) -> None:
+    resp = await client.post(
+        "/api/v1/agents/data/run",
+        headers={"X-API-Key": API_KEY},
+        json={"symbol": "AAPL", "interval": "not-an-interval"},
+    )
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["error"] == "validation_error"
+    assert "not-an-interval" in body["detail"]
+
+
+@pytest.mark.asyncio
+async def test_unhandled_exception_returns_structured_500() -> None:
+    """Catch-all handler: structured 500, no internals leaked."""
+    from fastapi import FastAPI
+
+    from qtrader.interfaces.api.app import _unhandled_error_response
+
+    app = FastAPI()
+
+    @app.get("/boom")
+    async def boom() -> None:
+        raise RuntimeError("kaboom")
+
+    app.add_exception_handler(Exception, _unhandled_error_response)
+
+    transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        resp = await client.get("/boom")
+
+    assert resp.status_code == 500
+    assert resp.json() == {"error": "internal_error", "detail": "internal server error"}
 
 
 @pytest.mark.asyncio
@@ -179,6 +237,7 @@ async def test_health_reports_ok(client: httpx.AsyncClient) -> None:
     assert body["status"] == "ok"
     assert body["database"] == "ok"
     assert body["cache"] == "ok"
+    assert body["worker"] == "ok"
 
 
 @pytest.mark.asyncio
@@ -239,5 +298,59 @@ async def test_system_metrics_snapshot(client: httpx.AsyncClient) -> None:
     assert body["mode"] == "backtest"
     assert body["database"] == "ok"
     assert body["cache"] == "ok"
+    assert body["worker"] == "ok"
+    assert body["events_by_type"] == {}
     assert body["uptime_seconds"] >= 0
     assert body["circuit_breakers"][0]["name"] == "yahoo"
+
+
+@pytest.mark.asyncio
+async def test_system_logs_lists_recent_entries() -> None:
+    from qtrader.domain.entities import SystemLog
+    from qtrader.interfaces.api.dependencies import get_system_log_repository
+
+    logs = FakeSystemLogRepository()
+    await logs.record(SystemLog(level="INFO", component="backtest", message="completed"))
+    await logs.record(SystemLog(level="WARN", component="gate", message="blocked"))
+
+    application = create_app()
+    application.dependency_overrides[get_container] = lambda: FakeContainer()
+    application.dependency_overrides[get_system_log_repository] = lambda: logs
+
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        resp = await client.get("/api/v1/system/logs", headers={"X-API-Key": API_KEY})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 2
+    assert body[0]["level"] == "WARN"
+    assert body[0]["message"] == "blocked"
+    assert body[0]["component"] == "gate"
+
+
+@pytest.mark.asyncio
+async def test_system_logs_filters_by_level_and_component() -> None:
+    from qtrader.domain.entities import SystemLog
+    from qtrader.interfaces.api.dependencies import get_system_log_repository
+
+    logs = FakeSystemLogRepository()
+    await logs.record(SystemLog(level="INFO", component="backtest", message="completed"))
+
+    application = create_app()
+    application.dependency_overrides[get_container] = lambda: FakeContainer()
+    application.dependency_overrides[get_system_log_repository] = lambda: logs
+
+    transport = httpx.ASGITransport(app=application)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test"
+    ) as client:
+        resp = await client.get(
+            "/api/v1/system/logs?level=warn&component=gate",
+            headers={"X-API-Key": API_KEY},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == []

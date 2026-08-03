@@ -10,18 +10,20 @@ from fastapi import APIRouter, Depends
 from qtrader.config.container import Container
 from qtrader.config.settings import Settings
 from qtrader.domain.exceptions import ValidationError
-from qtrader.domain.ports import EventRepository
+from qtrader.domain.ports import EventRepository, SystemLogRepository
 from qtrader.domain.value_objects import TradingMode
 from qtrader.interfaces.api.dependencies import (
     get_container,
     get_event_repository,
     get_settings,
+    get_system_log_repository,
     require_api_key,
 )
 from qtrader.interfaces.api.schemas import (
     CircuitBreakerSnapshot,
     HealthCheck,
     ModeToggle,
+    SystemLogOut,
     SystemMetrics,
     SystemStatus,
 )
@@ -39,6 +41,7 @@ async def health(
     return HealthCheck(
         database="ok" if await container.database_healthy() else "down",
         cache="ok" if await container.cache_healthy() else "down",
+        worker="ok" if await container.worker_healthy() else "down",
         mode=settings.qtrader_mode.value,
     )
 
@@ -71,18 +74,54 @@ async def resilience(container: Container = Depends(get_container)) -> list[Circ
 async def system_metrics(
     container: Container = Depends(get_container),
     settings: Settings = Depends(get_settings),
+    event_repo: EventRepository = Depends(get_event_repository),
 ) -> SystemMetrics:
     """Process-level metrics snapshot for monitoring/alerting."""
+    events_by_type: dict[str, int] = {}
+    try:
+        recent_events = await event_repo.list_after(None, None, 1000)
+        for event in recent_events:
+            events_by_type[event.type_name] = events_by_type.get(event.type_name, 0) + 1
+    except Exception:
+        pass
     return SystemMetrics(
         uptime_seconds=time.monotonic() - _PROCESS_START,
         mode=settings.qtrader_mode.value,
         live_enabled=settings.live_enabled,
         database="ok" if await container.database_healthy() else "down",
         cache="ok" if await container.cache_healthy() else "down",
+        worker="ok" if await container.worker_healthy() else "down",
+        events_by_type=events_by_type,
         circuit_breakers=[
             CircuitBreakerSnapshot.model_validate(s) for s in container.circuit_breakers()
         ],
     )
+
+
+@router.get(
+    "/system/logs",
+    response_model=list[SystemLogOut],
+    dependencies=[Depends(require_api_key)],
+)
+async def system_logs(
+    level: str | None = None,
+    component: str | None = None,
+    limit: int = 50,
+    logs: SystemLogRepository = Depends(get_system_log_repository),
+) -> list[SystemLogOut]:
+    """Recent audit/journal entries (gate decisions, backtest runs)."""
+    entries = await logs.recent(level, component, limit)
+    return [
+        SystemLogOut(
+            log_id=log.log_id,
+            level=log.level,
+            component=log.component,
+            message=log.message,
+            context=log.context,
+            created_at=log.created_at,
+        )
+        for log in entries
+    ]
 
 
 @router.post(

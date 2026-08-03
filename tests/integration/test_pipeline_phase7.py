@@ -204,6 +204,21 @@ async def test_dashboard_logs_and_metrics(
 
 
 @pytest.mark.asyncio
+async def test_system_log_repository_recent(
+    session_factory: async_sessionmaker, seeded: int
+) -> None:
+    logs = SQLAlchemySystemLogRepository(session_factory)
+    entries = await logs.recent(level="INFO", component="dashboard", limit=5)
+    assert entries
+    assert entries[0].level == "INFO"
+    assert entries[0].component == "dashboard"
+    assert entries[0].message == "integration seed"
+    assert entries[0].log_id is not None
+    filtered = await logs.recent(level="ERROR", limit=5)
+    assert filtered == []
+
+
+@pytest.mark.asyncio
 async def test_dashboard_performance_and_models(
     session_factory: async_sessionmaker, seeded: int
 ) -> None:

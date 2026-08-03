@@ -9,11 +9,14 @@ from fastapi import APIRouter, Depends
 
 from qtrader.application.agents.base import AgentContext
 from qtrader.application.agents.registry import default_registry
+from qtrader.config.logging import get_logger
 from qtrader.config.settings import Settings
-from qtrader.domain.exceptions import NotFoundError
+from qtrader.domain.exceptions import NotFoundError, ValidationError
 from qtrader.domain.value_objects import Interval
 from qtrader.interfaces.api.dependencies import get_container, get_settings, require_api_key
 from qtrader.interfaces.api.schemas import AgentRunRequest, AgentRunResult
+
+logger = get_logger("qtrader.api.agents")
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
@@ -50,11 +53,15 @@ async def run_agent(
     cls = registry.get(name)
     if cls is None:
         raise NotFoundError(f"unknown agent {name!r}")
+    try:
+        interval = Interval(body.interval)
+    except ValueError:
+        raise ValidationError(f"invalid interval {body.interval!r}") from None
     end = datetime.now(UTC)
     start = end - timedelta(days=body.days)
     ctx = AgentContext(
         symbol=body.symbol.upper(),
-        interval=Interval(body.interval),
+        interval=interval,
         start=start,
         end=end,
     )
@@ -62,5 +69,8 @@ async def run_agent(
         instance = container.resolve(cls)
         await instance.run(ctx)
     except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "agent.run_failed", agent=name, symbol=ctx.symbol, error=str(exc)
+        )
         return AgentRunResult(agent=name, status="error", detail=str(exc))
     return AgentRunResult(agent=name, status="ok", detail=f"ran {name} over {body.days}d window")

@@ -12,6 +12,7 @@ class HealthCheck(BaseModel):
     database: str
     cache: str
     broker: str = "not_configured"
+    worker: str = "unknown"
     mode: str
 
 
@@ -35,7 +36,18 @@ class SystemMetrics(BaseModel):
     live_enabled: bool
     database: str
     cache: str
+    worker: str = "unknown"
+    events_by_type: dict[str, int] = Field(default_factory=dict)
     circuit_breakers: list[CircuitBreakerSnapshot] = Field(default_factory=list)
+
+
+class SystemLogOut(BaseModel):
+    log_id: int
+    level: str
+    component: str | None = None
+    message: str
+    context: dict = Field(default_factory=dict)
+    created_at: datetime
 
 
 class ModeToggle(BaseModel):

@@ -100,6 +100,16 @@ class FakeSystemLogRepository(SystemLogRepository):
         self.entries.append(entry)
         return entry
 
+    async def recent(
+        self, level: str | None = None, component: str | None = None, limit: int = 50
+    ) -> list[SystemLog]:
+        entries = self.entries
+        if level is not None:
+            entries = [e for e in entries if e.level == level.upper()]
+        if component is not None:
+            entries = [e for e in entries if e.component == component]
+        return list(reversed(entries))[:limit]
+
 
 def money(value: str) -> Money:
     return Money(Decimal(value))

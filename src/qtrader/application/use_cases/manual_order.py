@@ -18,7 +18,11 @@ from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskInputs
 from qtrader.config.settings import Settings
 from qtrader.domain.entities import Order, Stock
-from qtrader.domain.exceptions import NoPriceDataError, OrderRejectedError
+from qtrader.domain.exceptions import (
+    NoPriceDataError,
+    OrderRejectedError,
+    ValidationError,
+)
 from qtrader.domain.ports import (
     IndicatorRepository,
     OrderRepository,
@@ -182,5 +186,5 @@ class ManualOrder:
     def _effective_mode(self) -> TradingMode:
         mode = self._settings.qtrader_mode
         if mode is TradingMode.LIVE and not self._settings.live_enabled:
-            raise ValueError("live mode requires ENABLE_LIVE_TRADING=true")
+            raise ValidationError("live mode requires ENABLE_LIVE_TRADING=true")
         return mode

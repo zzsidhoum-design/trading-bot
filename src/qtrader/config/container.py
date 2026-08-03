@@ -482,6 +482,15 @@ class Container:
         except Exception:
             return False
 
+    async def worker_healthy(self) -> bool:
+        """True when the scheduler worker has recently written its heartbeat."""
+        if self._redis_client is None:
+            return False
+        try:
+            return await RedisCache(self._redis_client).get("worker:heartbeat") is not None
+        except Exception:
+            return False
+
     def circuit_breakers(self) -> list[dict[str, object]]:
         """Snapshot of every registered circuit breaker (for observability)."""
         return self._breakers.snapshots()

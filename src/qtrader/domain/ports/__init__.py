@@ -380,6 +380,11 @@ class SystemLogRepository(ABC):
     @abstractmethod
     async def record(self, entry: SystemLog) -> SystemLog: ...
 
+    @abstractmethod
+    async def recent(
+        self, level: str | None = None, component: str | None = None, limit: int = 50
+    ) -> list[SystemLog]: ...
+
 
 # --------------------------------------------------------------------------- #
 # External adapters

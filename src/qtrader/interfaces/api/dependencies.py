@@ -24,6 +24,7 @@ from qtrader.domain.ports import (
     RiskRepository,
     SignalRepository,
     StockRepository,
+    SystemLogRepository,
 )
 
 
@@ -58,6 +59,12 @@ def get_risk_repository(container: Container = Depends(get_container)) -> RiskRe
 
 def get_event_repository(container: Container = Depends(get_container)) -> EventRepository:
     return container.resolve(EventRepository)
+
+
+def get_system_log_repository(
+    container: Container = Depends(get_container),
+) -> SystemLogRepository:
+    return container.resolve(SystemLogRepository)
 
 
 def get_indicator_repository(
