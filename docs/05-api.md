@@ -10,7 +10,7 @@
 **Common conventions:**
 - All reads paginated: `?limit=&offset=` or cursor; default `limit=50`.
 - Timestamps in ISO-8601 UTC.
-- Errors: `{ "detail": "..." }` with proper HTTP status; domain errors map 422/409/503.
+- Errors are envelopes: `{ "error": "<code>", "detail": "..." }` (see `docs/08-operations.md` §2), with proper HTTP status; domain errors map 422/404/409/503.
 - Read endpoints go through repositories; write endpoints go through **use cases** (never direct model access from routes).
 
 ---
@@ -19,9 +19,11 @@
 
 | method | path | purpose |
 |---|---|---|
-| GET | `/api/v1/health` | liveness + dependency health (db, redis, broker) |
-| GET | `/api/v1/system/status` | mode (backtest/paper/live), agents running/errors, graduation state |
-| GET | `/api/v1/system/events?type=&from=&to=` | event journal (outbox) with pagination |
+| GET | `/api/v1/health` | liveness + dependency health (`database`, `cache`, `worker`, `mode`) |
+| GET | `/api/v1/system/status` | mode (backtest/paper/live), live flag, agent registry |
+| GET | `/api/v1/system/metrics` | monitoring snapshot: uptime, db/cache/worker health, `events_by_type` counts, circuit breakers |
+| GET | `/api/v1/system/logs?level=&component=&limit=` | recent `system_logs` audit/journal rows |
+| GET | `/api/v1/system/events?type=&from=&to=&limit=` | event journal (outbox) with pagination |
 | GET | `/api/v1/system/resilience` | circuit-breaker snapshots (`name`, `state`, `consecutive_failures`, `reset_timeout_seconds`) per external service |
 | POST | `/api/v1/system/mode` | toggle {backtest, paper} (live requires separate gate) |
 

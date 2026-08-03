@@ -2,7 +2,7 @@
 
 Professional, scalable, event-driven trading platform. Python 3.12+, Clean Architecture, SOLID, async everywhere.
 
-> **Status: ALL PHASES 1–8 COMPLETE** — foundation, DB, API, worker, ten agents (Data, Scanner, Technical, News, Fundamental, Prediction, Chief, Risk, Portfolio, Execution), the deterministic backtesting engine + SystemGate graduation gate, the Phase 7 API + dashboard, and Phase 8 hardening are implemented and verified against the live container stack (`docker compose`). The full order lifecycle was verified end-to-end in the live stack: Chief → Risk (ATR-sized plans, bracket stops) → Portfolio (allocation) → Execution (paper fills, positions, trades, cash accounting). Prediction (ML probability-of-movement with a versioned model registry) and Chief (explainable BUY/SELL/HOLD decisions) were likewise verified live, including training + promotion. Backtesting replays stored bars through the production indicators + risk sizing (`BacktestRunner` → `strategy_performance` → `SystemGate` graduation), scheduled nightly as `backtest_cycle`; CI (GitHub Actions) gates merges on ruff + mypy + coverage. Phase 8 adds resilience primitives (circuit breakers, token-bucket rate limiting, transient-only retries) wired into the Yahoo/OpenAI/Alpaca adapters, symbol-sharded workers (`worker_shards`/`worker_shard_id`), fault-injection + WS fan-out tests, a load-test harness (`scripts/load_test.py`), and a `/system/resilience` observability endpoint. See `docs/07-hardening.md`.
+> **Status: REVIEW PHASES 1–12 DELIVERED** — the Phase 1–8 foundation (architecture, DI container, event-driven worker, ten agents, backtest engine + SystemGate, API + dashboard, resilience/hardening) shipped with all CI gates, followed by a 12-phase production-readiness review: structured logging + typed error envelopes (Phases 5–6), monitoring endpoints (`/system/metrics` with event counts, `/system/logs`, worker heartbeat in `/health`), dashboard agent-metrics writer, backtest failure-path + API hardening tests, paper-broker/execution resilience (REJECTED on poll failure, typed broker errors), performance work (SQL event counts, LLM rate limiting), and a security audit (constant-time auth, no secrets in logs, `pip-audit` clean). Suite: **285 unit / 311 with integration**, coverage **92.5%**, ruff + mypy clean. E2E order lifecycle verified live: Chief → Risk (ATR-sized, bracket stops) → Portfolio → Execution (paper fills, positions, trades, cash). See `docs/01–08`.
 
 ## Capabilities
 
@@ -34,7 +34,7 @@ Professional, scalable, event-driven trading platform. Python 3.12+, Clean Archi
 ## Repository Layout
 
 ```
-docs/            architecture · agents · database · data-flow · api · testing
+docs/            architecture · agents · database · data-flow · api · testing · hardening · operations
 src/qtrader/
   config/        settings + DI composition root
   domain/        entities, value objects, events, ports (no dependencies)
@@ -57,6 +57,7 @@ scripts/         dev/ops helpers
 | `docs/05-api.md` | REST + WebSocket API contract |
 | `docs/06-testing.md` | test pyramid, backtesting, paper trading, live gate |
 | `docs/07-hardening.md` | resilience, circuit breakers, sharding, load testing |
+| `docs/08-operations.md` | logging, error envelopes, monitoring endpoints, agent metrics, security posture (review phases 5–12) |
 
 ## Roadmap (each phase ends with review + tests green)
 
@@ -68,6 +69,12 @@ scripts/         dev/ops helpers
 6. **Backtesting + graduation gate** — replay engine, SystemGate, CI pipeline. ✅ *(complete)*
 7. **API + Dashboard** — FastAPI routes, WebSocket hub, web UI. ✅ *(complete)*
 8. **Hardening** — load test, fault injection, sharding, docs review. ✅ *(complete)*
+9. **Error handling review** — typed error envelopes, 422/401/500 contract, internal-error leak containment. ✅ *(complete)*
+10. **Monitoring review** — `/system/logs`, `/system/metrics` event counts, worker heartbeat in `/health`. ✅ *(complete)*
+11. **Dashboard metrics + backtest coverage** — `agent_metrics` writer, backtest failure path, API/router tests. ✅ *(complete)*
+12. **Paper trading resilience + performance** — REJECTED-on-poll-failure, typed broker errors, SQL event counts, LLM rate limiting. ✅ *(complete)*
+13. **Security audit** — constant-time auth, secrets hygiene, SQL parameterization, `pip-audit` clean. ✅ *(complete)*
+14. **Docs update** — this README + `docs/08-operations.md` + API doc sync. ✅ *(complete)*
 
 ## Safety
 
