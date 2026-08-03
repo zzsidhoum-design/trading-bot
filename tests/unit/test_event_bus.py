@@ -88,3 +88,35 @@ async def test_base_class_subscription_catches_all(fake_outbox: FakeEventReposit
     await bus.publish(_price_event())
     assert len(seen) == 1
     await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_failing_handler_does_not_block_others(fake_outbox: FakeEventRepository) -> None:
+    bus = InProcessEventBus(fake_outbox)
+    seen: list[str] = []
+
+    async def bad_handler(event: DomainEvent) -> None:
+        raise RuntimeError("boom")
+
+    async def good_handler(event: DomainEvent) -> None:
+        seen.append(event.type_name)
+
+    bus.subscribe(PriceUpdated, bad_handler)
+    bus.subscribe(PriceUpdated, good_handler)
+    await bus.publish(_price_event())
+
+    assert seen == ["PriceUpdated"]
+    await bus.close()
+
+
+@pytest.mark.asyncio
+async def test_failing_handler_does_not_crash_publisher(fake_outbox: FakeEventRepository) -> None:
+    bus = InProcessEventBus(fake_outbox)
+
+    async def bad_handler(event: DomainEvent) -> None:
+        raise RuntimeError("boom")
+
+    bus.subscribe(PriceUpdated, bad_handler)
+    await bus.publish(_price_event())
+    assert len(fake_outbox.records) == 1
+    await bus.close()
