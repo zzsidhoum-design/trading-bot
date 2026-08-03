@@ -1,4 +1,4 @@
-﻿"""Value objects â€” immutable primitives shared across the domain.
+﻿"""Value objects — immutable primitives shared across the domain.
 
 Nothing in this module may import from infrastructure or application layers.
 """

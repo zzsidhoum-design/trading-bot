@@ -1,4 +1,4 @@
-﻿"""Execution Agent â€” submits risk-approved allocations to the broker
+﻿"""Execution Agent — submits risk-approved allocations to the broker
 (docs/02-agents.md Â§9).
 
 Consumes ``AllocationProposal``, resolves the stock and order, submits through

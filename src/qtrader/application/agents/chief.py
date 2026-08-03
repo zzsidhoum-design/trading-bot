@@ -118,14 +118,7 @@ class ChiefAgent(AgentBase):
         return record
 
     async def decide_candidates(self, symbols: list[str]) -> int:
-        decided = 0
-        for symbol in symbols:
-            try:
-                if await self.decide_symbol(symbol) is not None:
-                    decided += 1
-            except Exception:
-                self._logger.exception("chief.decide_failed", symbol=symbol)
-        return decided
+        return await self.run_batch(symbols, self.decide_symbol, action="chief.decide_failed")
 
     async def on_event(self, event: DomainEvent) -> None:
         if isinstance(event, ScanCompleted):

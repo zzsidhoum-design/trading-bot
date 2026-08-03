@@ -9,6 +9,7 @@ and skipped — the pipeline never crashes on a bad article.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import ClassVar
@@ -152,7 +153,6 @@ class NewsAgent(AgentBase):
         except Exception as exc:
             self._logger.warning("news.llm_failed", url=item.url, error=str(exc))
             return None
-        from dataclasses import replace
 
         return replace(
             item,
@@ -167,14 +167,7 @@ class NewsAgent(AgentBase):
         )
 
     async def analyze_candidates(self, symbols: list[str]) -> int:
-        scored = 0
-        for symbol in symbols:
-            try:
-                if await self.analyze_symbol(symbol) != 0.0:
-                    scored += 1
-            except Exception:
-                self._logger.exception("news.analyze_failed", symbol=symbol)
-        return scored
+        return await self.run_batch(symbols, self.analyze_symbol, action="news.analyze_failed")
 
     async def on_event(self, event: DomainEvent) -> None:
         if isinstance(event, ScanCompleted):

@@ -1,4 +1,4 @@
-﻿"""Data Agent â€” reliable, clean market data in the DB (docs/02-agents.md Â§1).
+"""Data Agent — reliable, clean market data in the DB (docs/02-agents.md §1).
 
 Ingests bars from a MarketDataProvider, cleans them, persists via the
 PriceRepository and publishes ``PriceUpdated`` / ``BackfillCompleted``. The
@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from decimal import Decimal
 from typing import Any, ClassVar
 
 from qtrader.application.agents.base import AgentBase, AgentContext
@@ -18,10 +17,6 @@ from qtrader.application.services.bar_cleaner import BarCleaner
 from qtrader.domain.events import BackfillCompleted, DomainEvent, PriceUpdated
 from qtrader.domain.ports import Cache, EventBus, MarketDataProvider, PriceRepository
 from qtrader.domain.value_objects import Interval, PriceBar
-
-
-def _to_str(value: Decimal) -> str:
-    return str(value)
 
 
 class DataAgent(AgentBase):
@@ -106,11 +101,11 @@ class DataAgent(AgentBase):
                     symbol=bar.symbol,
                     interval=bar.interval,
                     ts=bar.ts.isoformat(),
-                    open=_to_str(bar.open),
-                    high=_to_str(bar.high),
-                    low=_to_str(bar.low),
-                    close=_to_str(bar.close),
-                    volume=_to_str(bar.volume),
+                    open=str(bar.open),
+                    high=str(bar.high),
+                    low=str(bar.low),
+                    close=str(bar.close),
+                    volume=str(bar.volume),
                 )
             )
         return bar
@@ -120,11 +115,11 @@ class DataAgent(AgentBase):
             "symbol": bar.symbol,
             "interval": bar.interval,
             "ts": bar.ts.isoformat(),
-            "open": _to_str(bar.open),
-            "high": _to_str(bar.high),
-            "low": _to_str(bar.low),
-            "close": _to_str(bar.close),
-            "volume": _to_str(bar.volume),
+            "open": str(bar.open),
+            "high": str(bar.high),
+            "low": str(bar.low),
+            "close": str(bar.close),
+            "volume": str(bar.volume),
         }
         await self._cache.set(
             f"quote:{bar.symbol}", json.dumps(payload), ttl_seconds=self._quote_ttl

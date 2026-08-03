@@ -92,14 +92,9 @@ class FundamentalAgent(AgentBase):
         return data
 
     async def analyze_candidates(self, symbols: list[str]) -> int:
-        scored = 0
-        for symbol in symbols:
-            try:
-                if await self.analyze_symbol(symbol) is not None:
-                    scored += 1
-            except Exception:
-                self._logger.exception("fundamental.analyze_failed", symbol=symbol)
-        return scored
+        return await self.run_batch(
+            symbols, self.analyze_symbol, action="fundamental.analyze_failed"
+        )
 
     async def on_event(self, event: DomainEvent) -> None:
         if isinstance(event, ScanCompleted):

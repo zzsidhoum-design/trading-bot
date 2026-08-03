@@ -1,4 +1,4 @@
-﻿"""Prediction Agent â€” probability-of-movement (docs/02-agents.md Â§6).
+﻿"""Prediction Agent — probability-of-movement (docs/02-agents.md §6).
 
 Builds a deterministic feature vector via the FeatureStore, runs the active
 model from the registry (falling back to a heuristic when absent), persists a
@@ -119,14 +119,9 @@ class PredictionAgent(AgentBase):
         return prediction
 
     async def predict_candidates(self, symbols: list[str]) -> int:
-        predicted = 0
-        for symbol in symbols:
-            try:
-                if await self.predict_symbol(symbol) is not None:
-                    predicted += 1
-            except Exception:
-                self._logger.exception("prediction.analyze_failed", symbol=symbol)
-        return predicted
+        return await self.run_batch(
+            symbols, self.predict_symbol, action="prediction.analyze_failed"
+        )
 
     async def on_event(self, event: DomainEvent) -> None:
         if isinstance(event, ScanCompleted):

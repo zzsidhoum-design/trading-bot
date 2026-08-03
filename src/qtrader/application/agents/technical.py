@@ -95,14 +95,7 @@ class TechnicalAgent(AgentBase):
         return snapshot
 
     async def analyze_candidates(self, symbols: list[str]) -> int:
-        analyzed = 0
-        for symbol in symbols:
-            try:
-                if await self.analyze_symbol(symbol) is not None:
-                    analyzed += 1
-            except Exception:
-                self._logger.exception("technical.analyze_failed", symbol=symbol)
-        return analyzed
+        return await self.run_batch(symbols, self.analyze_symbol, action="technical.analyze_failed")
 
     async def on_event(self, event: DomainEvent) -> None:
         if isinstance(event, ScanCompleted):

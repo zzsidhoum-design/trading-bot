@@ -1,4 +1,4 @@
-﻿"""Domain entities â€” pure business objects with no ORM/IO knowledge.
+﻿"""Domain entities — pure business objects with no ORM/IO knowledge.
 
 Repositories (infrastructure) are responsible for mapping these to/from
 persistence; entities never import SQLAlchemy.

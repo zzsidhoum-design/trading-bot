@@ -1,4 +1,4 @@
-﻿"""Risk Agent â€” the capital-safety gate for every Chief decision (docs/02-agents.md Â§7).
+﻿"""Risk Agent — the capital-safety gate for every Chief decision (docs/02-agents.md §7).
 
 Consumes ``DecisionMade``, gathers live context (portfolio equity, open
 positions, sector concentration, price, ATR, cooldown, daily trade count) and

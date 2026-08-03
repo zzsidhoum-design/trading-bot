@@ -1,4 +1,4 @@
-﻿"""Portfolio Agent â€” capital allocation & rebalancing (docs/02-agents.md Â§8).
+﻿"""Portfolio Agent — capital allocation & rebalancing (docs/02-agents.md §8).
 
 Consumes ``RiskApproved``, applies the pluggable :class:`AllocationPolicy` to
 turn the risk-sized plan into an executable quantity (never exceeding
