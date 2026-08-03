@@ -10,7 +10,7 @@ hooks — instead of an implicit ``lru_cache`` singleton.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TypeVar, cast
 
 import punq
@@ -118,20 +118,36 @@ T = TypeVar("T")
 
 
 class Container:
-    """Thin wrapper over punq that registers the production graph."""
+    """Thin wrapper over punq that registers the production graph.
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    ``overrides`` maps a port type to a zero-arg factory; when present the
+    production adapter for that port is replaced (used by E2E tests to mock
+    external services while keeping the real wiring).
+    """
+
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        overrides: Mapping[type[object], Callable[[], object]] | None = None,
+    ) -> None:
         self._settings = settings or Settings()
+        self._overrides = dict(overrides or {})
         self._container = punq.Container()
         self._engine: AsyncEngine | None = None
         self._redis_client: Redis | None = None
-        self._provider: YahooFinanceProvider | None = None
-        self._news_provider: RSSNewsProvider | None = None
+        self._provider: MarketDataProvider | None = None
+        self._news_provider: NewsProvider | None = None
         self._broker: BrokerGateway | None = None
         self._breakers = CircuitBreakerRegistry()
         # Configure logging once at container creation
         configure_logging(self._settings)
         self._build()
+
+    def _adapt(self, port: type[T], factory: Callable[[], T]) -> T:
+        """Production adapter unless the test overrides the port."""
+        override = self._overrides.get(port)
+        return cast(T, override()) if override is not None else factory()
 
     def _build(self) -> None:
         c = self._container
@@ -183,18 +199,21 @@ class Container:
         else:
             llm = KeywordLLMClient()
         c.register(LLMClient, instance=llm)
-        self._news_provider = RSSNewsProvider()
+        self._news_provider = self._adapt(NewsProvider, lambda: RSSNewsProvider())
         c.register(NewsProvider, instance=self._news_provider)
 
         cleaner = BarCleaner()
         c.register(BarCleaner, instance=cleaner)
 
-        provider = YahooFinanceProvider(
-            circuit=self._breakers.get_or_create(
-                "yahoo",
-                failure_threshold=self._settings.provider_failure_threshold,
-                reset_timeout_seconds=self._settings.provider_reset_timeout_seconds,
-            )
+        provider = self._adapt(
+            MarketDataProvider,
+            lambda: YahooFinanceProvider(
+                circuit=self._breakers.get_or_create(
+                    "yahoo",
+                    failure_threshold=self._settings.provider_failure_threshold,
+                    reset_timeout_seconds=self._settings.provider_reset_timeout_seconds,
+                )
+            ),
         )
         self._provider = provider
         c.register(MarketDataProvider, instance=provider)
@@ -473,12 +492,14 @@ class Container:
 
         logger = get_logger("qtrader.container")
         closers: list[tuple[str, Awaitable[None]]] = []
-        if self._provider is not None:
-            closers.append(("provider", self._provider.close()))
-        if self._news_provider is not None:
-            closers.append(("news_provider", self._news_provider.close()))
-        if self._broker is not None:
-            closers.append(("broker", self._broker.close()))
+        for name, maybe in (
+            ("provider", self._provider),
+            ("news_provider", self._news_provider),
+            ("broker", self._broker),
+        ):
+            close = getattr(maybe, "close", None)
+            if close is not None:
+                closers.append((name, close()))
         if self._redis_client is not None:
             closers.append(("redis", self._redis_client.aclose()))
         if self._engine is not None:
