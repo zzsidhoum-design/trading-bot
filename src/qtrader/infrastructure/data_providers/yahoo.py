@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from qtrader.config.logging import get_logger
 from qtrader.domain.ports import MarketDataProvider
 from qtrader.domain.value_objects import Interval, PriceBar
 from qtrader.infrastructure.resilience import (
@@ -22,6 +23,8 @@ from qtrader.infrastructure.resilience import (
 )
 
 DEFAULT_BASE_URL = "https://query1.finance.yahoo.com"
+
+_logger = get_logger("qtrader.yahoo")
 
 
 def parse_chart_response(
@@ -163,9 +166,10 @@ async def _demo() -> None:
         bars = await provider.fetch_bars(
             "AAPL", Interval.D1, datetime(2026, 7, 1, tzinfo=UTC), datetime(2026, 8, 1, tzinfo=UTC)
         )
-        print(f"AAPL D1: {len(bars)} bars, last={bars[-1] if bars else None}")
+        last = bars[-1] if bars else None
+        _logger.info("yahoo.demo.bars", symbol="AAPL", count=len(bars), last=last)
         quote = await provider.fetch_quote("AAPL")
-        print(f"AAPL quote: {quote}")
+        _logger.info("yahoo.demo.quote", symbol="AAPL", close=quote.close)
     finally:
         await provider.close()
 

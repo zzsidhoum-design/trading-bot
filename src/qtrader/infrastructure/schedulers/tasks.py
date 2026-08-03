@@ -53,6 +53,29 @@ async def _shutdown(ctx: dict[str, Any]) -> None:
         ctx[CONTAINER_KEY] = None
 
 
+async def _on_job_start(ctx: dict[str, Any]) -> None:
+    """Bind per-job context for structured logs; drop any stale context.
+
+    arq reuses one process for every job, so without clearing, contextvars
+    (correlation IDs etc.) from the previous job would leak into the next.
+    """
+    import structlog
+
+    from qtrader.config.logging import set_correlation_id
+
+    structlog.contextvars.clear_contextvars()
+    job_id = str(ctx.get("job_id", ""))
+    structlog.contextvars.bind_contextvars(job=ctx.get("job_name", ""), job_id=job_id[:8])
+    set_correlation_id(f"job:{job_id[:8]}")
+
+
+async def _on_job_end(ctx: dict[str, Any]) -> None:
+    """Release per-job logging context."""
+    import structlog
+
+    structlog.contextvars.clear_contextvars()
+
+
 def _owned(symbols: list[str]) -> list[str]:
     """Filter ``symbols`` down to this worker's shard (see application/services/shard.py)."""
     from qtrader.application.services.shard import owned_symbols
@@ -221,6 +244,8 @@ class WorkerSettings:
 
     on_startup = _startup
     on_shutdown = _shutdown
+    on_job_start = _on_job_start
+    on_job_end = _on_job_end
 
     max_tries = 3
     job_timeout = 60

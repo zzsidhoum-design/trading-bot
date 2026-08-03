@@ -7,15 +7,19 @@ Integrates with stdlib logging for third-party libraries.
 from __future__ import annotations
 
 import logging
-import time
+import time as _time
 import uuid
 from contextvars import ContextVar
+from datetime import date, datetime, time
+from decimal import Decimal
+from enum import Enum
 from typing import Any, cast
 
 import structlog
 from structlog.types import EventDict, Processor
 
 from qtrader.config.settings import Settings
+from qtrader.domain.value_objects import Money
 
 _correlation_id_var: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 
@@ -75,6 +79,25 @@ def _add_log_level(
     return event_dict
 
 
+def _json_default(value: Any) -> Any:
+    """JSON fallback for non-serializable log values (Decimal, Money, dates).
+
+    A crashing logger would otherwise take down the request/handler that
+    triggered it, so every unknown value degrades to a string instead.
+    """
+    if isinstance(value, Money):
+        return str(value.amount)
+    if isinstance(value, Decimal):
+        return str(value)
+    if isinstance(value, (datetime, date, time)):
+        return value.isoformat()
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, (set, frozenset, tuple)):
+        return [str(v) for v in value]
+    return str(value)
+
+
 def configure_logging(settings: Settings | None = None) -> None:
     """Configure structlog and stdlib logging.
 
@@ -126,10 +149,10 @@ def configure_logging(settings: Settings | None = None) -> None:
             structlog.dev.ConsoleRenderer(colors=True)
         ]
     else:
-        # Production: JSON output
+        # Production: JSON output (never crashes on Decimal/Money/dates).
         processors = shared_processors + [
             structlog.processors.dict_tracebacks,
-            structlog.processors.JSONRenderer(),
+            structlog.processors.JSONRenderer(default=_json_default),
         ]
 
     structlog.configure(
@@ -169,7 +192,7 @@ class LoggingMiddleware:
 
         correlation_id = str(uuid.uuid4())[:8]
         token = _correlation_id_var.set(correlation_id)
-        start = time.perf_counter()
+        start = _time.perf_counter()
         status_code = 500
 
         async def _send(message: dict[str, Any]) -> None:
@@ -181,7 +204,7 @@ class LoggingMiddleware:
         try:
             await self.app(scope, receive, _send)
         finally:
-            duration_ms = (time.perf_counter() - start) * 1000
+            duration_ms = (_time.perf_counter() - start) * 1000
             get_logger("qtrader.http").info(
                 "http.request",
                 method=scope.get("method", ""),

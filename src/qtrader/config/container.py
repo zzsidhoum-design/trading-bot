@@ -508,7 +508,7 @@ class Container:
             try:
                 await closer
             except Exception:
-                logger.exception("failed to close %s", name)
+                logger.exception("container.close_failed", resource=name)
 
 
 _container: Container | None = None

@@ -79,6 +79,30 @@ def test_logging_can_handle_none_values(capsys) -> None:
     assert parsed["value"] is None
 
 
+def test_json_serializer_handles_decimal_money_enum_datetime(capsys) -> None:
+    """Non-JSON-native log values degrade to strings instead of crashing."""
+    from datetime import UTC, datetime
+    from decimal import Decimal
+
+    from qtrader.domain.value_objects import Money, SignalType
+
+    _configure_json()
+    logger = get_logger("test.safe.serializer")
+    logger.info(
+        "test.safe",
+        price=Decimal("12.3400"),
+        cash=Money(1000),
+        signal=SignalType.BUY,
+        at=datetime(2026, 8, 1, 12, 0, tzinfo=UTC),
+    )
+    parsed = _captured(capsys)
+    assert parsed["message"] == "test.safe"
+    assert parsed["price"] == "12.3400"
+    assert parsed["cash"] == "1000.000000"  # Money amount keeps money precision
+    assert parsed["signal"] == "BUY"
+    assert parsed["at"] == "2026-08-01T12:00:00+00:00"
+
+
 def test_structlog_module_level_works(capsys) -> None:
     """Module-level structlog loggers work after configure_logging."""
     _configure_json()
