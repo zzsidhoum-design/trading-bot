@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 
 import typer
 
+from qtrader import __version__
 from qtrader.application.agents.base import AgentContext
 from qtrader.application.agents.registry import default_registry
 from qtrader.config.container import Container
@@ -39,7 +40,7 @@ def status() -> None:
 @app.command()
 def version() -> None:
     """Show version."""
-    typer.echo("qtrader 0.1.0")
+    typer.echo(f"qtrader {__version__}")
 
 
 @app.command()

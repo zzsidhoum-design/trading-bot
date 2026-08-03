@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from qtrader import __version__
 from qtrader.config.container import get_container, shutdown_container
 from qtrader.config.logging import LoggingMiddleware, get_logger
 from qtrader.domain.exceptions import QtraderError
@@ -85,7 +86,7 @@ async def _unhandled_error_response(request: Request, exc: Exception) -> JSONRes
 def create_app() -> FastAPI:
     app = FastAPI(
         title="qtrader API",
-        version="0.1.0",
+        version=__version__,
         lifespan=lifespan,
         openapi_url="/api/v1/openapi.json",
         docs_url="/docs",
