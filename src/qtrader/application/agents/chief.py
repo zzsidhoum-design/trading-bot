@@ -12,8 +12,6 @@ import uuid
 from decimal import ROUND_HALF_UP, Decimal
 from typing import ClassVar
 
-import structlog
-
 from qtrader.application.agents.base import AgentBase, AgentContext
 from qtrader.domain.entities import AgentEvidence, DecisionRecord
 from qtrader.domain.events import DecisionMade, DomainEvent, ScanCompleted
@@ -25,8 +23,6 @@ from qtrader.domain.ports import (
     SignalRepository,
 )
 from qtrader.domain.value_objects import Decision
-
-logger = structlog.get_logger(__name__)
 
 SCORE_QUANT = Decimal("0.0001")
 
@@ -89,7 +85,7 @@ class ChiefAgent(AgentBase):
             )
 
         if not evidence:
-            logger.warning("chief.no_evidence", symbol=symbol)
+            self._logger.warning("chief.no_evidence", symbol=symbol)
             return None
 
         outcome = self._strategy.decide(evidence)
@@ -102,7 +98,7 @@ class ChiefAgent(AgentBase):
             agent_scores=outcome.agent_scores,
         )
         await self._decisions.save(record)
-        logger.info(
+        self._logger.info(
             "chief.decision",
             symbol=symbol,
             decision=outcome.decision,
@@ -128,7 +124,7 @@ class ChiefAgent(AgentBase):
                 if await self.decide_symbol(symbol) is not None:
                     decided += 1
             except Exception:
-                logger.exception("chief.decide_failed", symbol=symbol)
+                self._logger.exception("chief.decide_failed", symbol=symbol)
         return decided
 
     async def on_event(self, event: DomainEvent) -> None:

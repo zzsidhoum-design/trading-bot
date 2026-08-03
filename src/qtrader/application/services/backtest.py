@@ -10,7 +10,6 @@ results. The whole loop is deterministic.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
@@ -18,6 +17,7 @@ from decimal import Decimal
 from qtrader.application.services.indicators import IndicatorEngine, IndicatorSnapshot
 from qtrader.application.services.performance_metrics import PerformanceMetrics
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskInputs
+from qtrader.config.logging import get_logger
 from qtrader.domain.entities import BacktestRun, PerformanceSummary, SystemLog
 from qtrader.domain.ports import (
     BacktestRepository,
@@ -34,7 +34,7 @@ from qtrader.domain.value_objects import (
     TradingMode,
 )
 
-logger = logging.getLogger("qtrader.backtest")
+logger = get_logger("qtrader.backtest")
 
 _BPS = Decimal("0.0001")
 _PRICE_QUANT = Decimal("0.000001")

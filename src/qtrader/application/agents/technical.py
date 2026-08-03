@@ -10,16 +10,12 @@ from __future__ import annotations
 from decimal import ROUND_HALF_UP, Decimal
 from typing import ClassVar
 
-import structlog
-
 from qtrader.application.agents.base import AgentBase, AgentContext
 from qtrader.application.services.indicators import IndicatorEngine, score_technical
 from qtrader.domain.entities import IndicatorSnapshot, Signal
 from qtrader.domain.events import DomainEvent, ScanCompleted, TechnicalSignalGenerated
 from qtrader.domain.ports import EventBus, IndicatorRepository, PriceRepository, SignalRepository
 from qtrader.domain.value_objects import Interval
-
-logger = structlog.get_logger(__name__)
 
 SCORE_QUANT = Decimal("0.0001")
 
@@ -60,7 +56,7 @@ class TechnicalAgent(AgentBase):
         interval = interval or self._interval
         bars = await self._prices.history(symbol, interval, limit=self._history_limit)
         if len(bars) < self._min_bars:
-            logger.warning(
+            self._logger.warning(
                 "technical.insufficient_bars", symbol=symbol, interval=interval, bars=len(bars)
             )
             return None
@@ -79,7 +75,7 @@ class TechnicalAgent(AgentBase):
             metadata={"sub_scores": sub_scores},
         )
         await self._signals.save(signal)
-        logger.info(
+        self._logger.info(
             "technical.signal",
             symbol=symbol,
             interval=interval,
@@ -105,7 +101,7 @@ class TechnicalAgent(AgentBase):
                 if await self.analyze_symbol(symbol) is not None:
                     analyzed += 1
             except Exception:
-                logger.exception("technical.analyze_failed", symbol=symbol)
+                self._logger.exception("technical.analyze_failed", symbol=symbol)
         return analyzed
 
     async def on_event(self, event: DomainEvent) -> None:

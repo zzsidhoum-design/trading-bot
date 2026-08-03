@@ -1,4 +1,4 @@
-"""Risk Agent — the capital-safety gate for every Chief decision (docs/02-agents.md §7).
+﻿"""Risk Agent â€” the capital-safety gate for every Chief decision (docs/02-agents.md Â§7).
 
 Consumes ``DecisionMade``, gathers live context (portfolio equity, open
 positions, sector concentration, price, ATR, cooldown, daily trade count) and
@@ -13,8 +13,6 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import ClassVar
-
-import structlog
 
 from qtrader.application.agents.base import AgentBase, AgentContext
 from qtrader.application.services.portfolio_service import PortfolioService
@@ -37,8 +35,6 @@ from qtrader.domain.value_objects import (
     Percentage,
     TradeSide,
 )
-
-logger = structlog.get_logger(__name__)
 
 
 class RiskAgent(AgentBase):
@@ -161,7 +157,7 @@ class RiskAgent(AgentBase):
             estimated_exposure=Percentage(assessment.exposure_pct or Decimal(0)),
             entry_price=entry_price,
         )
-        logger.info(
+        self._logger.info(
             "risk.approved",
             symbol=assessment.symbol,
             qty=str(plan.quantity),
@@ -245,7 +241,7 @@ class RiskAgent(AgentBase):
             try:
                 await self.assess_symbol(event)
             except Exception:
-                logger.exception("risk.assess_failed", symbol=event.symbol)
+                self._logger.exception("risk.assess_failed", symbol=event.symbol)
 
     async def run(self, ctx: AgentContext) -> None:
-        logger.warning("risk.run_standalone", detail="Risk agent is event-driven only")
+        self._logger.warning("risk.run_standalone", detail="Risk agent is event-driven only")

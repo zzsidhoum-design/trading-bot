@@ -2,11 +2,15 @@
 
 Production container wires real adapters; tests build their own container
 with fakes. Application code never constructs dependencies directly.
+The process-wide container lives in an explicit holder (``get_container`` /
+``shutdown_container``) so its lifecycle (engine pool, redis, providers)
+is owned by the process — API lifespan or the worker's startup/shutdown
+hooks — instead of an implicit ``lru_cache`` singleton.
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
+from collections.abc import Awaitable
 from typing import TypeVar, cast
 
 import punq
@@ -36,6 +40,7 @@ from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskPolicy
 from qtrader.application.services.system_gate import GateThresholds, SystemGate
 from qtrader.application.use_cases.manual_order import ManualOrder
+from qtrader.config.logging import configure_logging
 from qtrader.config.settings import Settings
 from qtrader.domain.events import (
     AllocationProposal,
@@ -74,6 +79,7 @@ from qtrader.domain.ports import (
     StockRepository,
     SystemLogRepository,
     TradeRepository,
+    UnitOfWorkFactory,
 )
 from qtrader.domain.value_objects import Money, TradingMode
 from qtrader.infrastructure.brokers import AlpacaBroker, PaperBroker
@@ -102,6 +108,7 @@ from qtrader.infrastructure.database.repositories import (
     SQLAlchemyTradeRepository,
 )
 from qtrader.infrastructure.database.session import build_engine, build_session_factory
+from qtrader.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWorkFactory
 from qtrader.infrastructure.eventbus import InProcessEventBus
 from qtrader.infrastructure.llm.adapters import KeywordLLMClient, OpenAILLMClient
 from qtrader.infrastructure.news.feed import RSSNewsProvider
@@ -122,6 +129,8 @@ class Container:
         self._news_provider: RSSNewsProvider | None = None
         self._broker: BrokerGateway | None = None
         self._breakers = CircuitBreakerRegistry()
+        # Configure logging once at container creation
+        configure_logging(self._settings)
         self._build()
 
     def _build(self) -> None:
@@ -160,6 +169,11 @@ class Container:
         c.register(PerformanceRepository, instance=SQLAlchemyPerformanceRepository(session_factory))
         c.register(SystemLogRepository, instance=SQLAlchemySystemLogRepository(session_factory))
         c.register(DashboardQueries, instance=SQLAlchemyDashboardRepository(session_factory))
+
+        c.register(
+            UnitOfWorkFactory,
+            instance=SQLAlchemyUnitOfWorkFactory(session_factory),
+        )
 
         c.register(FundamentalProvider, instance=StubFundamentalProvider())
 
@@ -398,6 +412,7 @@ class Container:
             bus=bus,
             gate=system_gate,
             gate_strategy=self._settings.gate_strategy,
+            uow_factory=c.resolve(UnitOfWorkFactory),
         )
         c.register(ExecutionAgent, instance=execution_agent)
 
@@ -454,18 +469,47 @@ class Container:
 
     async def aclose(self) -> None:
         """Best-effort release of engine pool, redis and provider connections."""
+        from qtrader.config.logging import get_logger
+
+        logger = get_logger("qtrader.container")
+        closers: list[tuple[str, Awaitable[None]]] = []
         if self._provider is not None:
-            await self._provider.close()
+            closers.append(("provider", self._provider.close()))
         if self._news_provider is not None:
-            await self._news_provider.close()
+            closers.append(("news_provider", self._news_provider.close()))
         if self._broker is not None:
-            await self._broker.close()
+            closers.append(("broker", self._broker.close()))
         if self._redis_client is not None:
-            await self._redis_client.aclose()
+            closers.append(("redis", self._redis_client.aclose()))
         if self._engine is not None:
-            await self._engine.dispose()
+            closers.append(("engine", self._engine.dispose()))
+        for name, closer in closers:
+            try:
+                await closer
+            except Exception:
+                logger.exception("failed to close %s", name)
 
 
-@lru_cache
+_container: Container | None = None
+
+
 def get_container() -> Container:
-    return Container()
+    """Return the process-wide container, creating it on first use."""
+    global _container
+    if _container is None:
+        _container = Container()
+    return _container
+
+
+def set_container(container: Container | None) -> None:
+    """Replace the process-wide container (used by tests/embedders)."""
+    global _container
+    _container = container
+
+
+async def shutdown_container() -> None:
+    """Close and drop the process-wide container (idempotent)."""
+    global _container
+    if _container is not None:
+        await _container.aclose()
+        _container = None

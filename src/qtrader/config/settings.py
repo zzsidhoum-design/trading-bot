@@ -1,4 +1,9 @@
-"""Application settings — single source of truth, env-driven (pydantic-settings)."""
+"""Application settings — single source of truth, env-driven (pydantic-settings).
+
+Declared as focused mixins grouped by concern (database, API, market data,
+analysis, prediction, trading, backtesting, worker) so no single class
+becomes a god-object, while all fields keep the flat env schema (``.env``).
+"""
 
 from __future__ import annotations
 
@@ -11,18 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from qtrader.domain.value_objects import Interval, TradingMode
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-        case_sensitive=False,
-    )
-
-    qtrader_mode: TradingMode = TradingMode.BACKTEST
-    enable_live_trading: bool = False
-    log_level: str = "INFO"
-
+class DatabaseSettingsMixin(BaseSettings):
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_db: str = "qtrader"
@@ -31,11 +25,30 @@ class Settings(BaseSettings):
 
     redis_url: str = "redis://localhost:6379/0"
 
+    @field_validator("postgres_port")
+    @classmethod
+    def _port_range(cls, value: int) -> int:
+        if not 1 <= value <= 65535:
+            raise ValueError("postgres_port out of range")
+        return value
+
+    @property
+    def database_url(self) -> str:
+        return (
+            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
+
+class ApiSettingsMixin(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     api_key: str = "change-me"
 
-    # Phase 2 — data ingestion & scanning
+
+class MarketDataSettingsMixin(BaseSettings):
+    """Phase 2 — data ingestion & scanning."""
+
     watchlist: str = "AAPL,MSFT,TSLA"
     data_provider: str = "yahoo"
     backfill_days: int = 30
@@ -46,7 +59,20 @@ class Settings(BaseSettings):
     scan_min_dollar_volume: float = 500_000.0
     scan_min_atr_pct: float = 0.3
 
-    # Phase 3 — analysis agents
+    @property
+    def watchlist_symbols(self) -> list[str]:
+        """Parsed watchlist (comma-separated, trimmed, uppercased)."""
+        return [s.strip().upper() for s in self.watchlist.split(",") if s.strip()]
+
+    @property
+    def scan_interval(self) -> Interval:
+        """Default intraday interval used by the Market Scanner."""
+        return Interval.M5
+
+
+class AnalysisSettingsMixin(BaseSettings):
+    """Phase 3 — analysis agents & external providers."""
+
     technical_history_bars: int = 260
     technical_min_bars: int = 60
     news_lookback_hours: int = 24
@@ -54,7 +80,6 @@ class Settings(BaseSettings):
     fundamental_max_age_days: int = 120
     llm_model: str = "gpt-4o-mini"
 
-    # Phase 3+ (declared now so env schema is stable):
     yahoo_enabled: bool = True
     polygon_api_key: str | None = None
     alpaca_api_key: str | None = None
@@ -64,7 +89,10 @@ class Settings(BaseSettings):
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
 
-    # Phase 4 — prediction & decisions
+
+class PredictionSettingsMixin(BaseSettings):
+    """Phase 4 — prediction & decisions."""
+
     prediction_model_name: str = "momentum"
     prediction_horizon: str = "intraday"
     prediction_lookback_bars: int = 120
@@ -79,7 +107,20 @@ class Settings(BaseSettings):
     decision_conflict_threshold: float = 0.5
     decision_min_coverage: float = 0.5
 
-    # Phase 5 — risk, portfolio & execution
+    @property
+    def decision_weights_dict(self) -> dict[str, float]:
+        """Parsed per-agent decision weights (e.g. ``technical:0.30,...``)."""
+        weights: dict[str, float] = {}
+        for part in self.decision_weights.split(","):
+            if ":" in part:
+                key, value = part.split(":", 1)
+                weights[key.strip().lower()] = float(value)
+        return weights
+
+
+class TradingSettingsMixin(BaseSettings):
+    """Phase 5 — risk, portfolio & execution."""
+
     risk_per_trade_pct: float = 0.01
     max_daily_loss_pct: float = 0.03
     max_portfolio_exposure_pct: float = 0.8
@@ -95,7 +136,10 @@ class Settings(BaseSettings):
     portfolio_initial_capital: float = 100_000.0
     broker_provider: str = "paper"
 
-    # Phase 6 — backtesting & SystemGate graduation
+
+class BacktestSettingsMixin(BaseSettings):
+    """Phase 6 — backtesting & SystemGate graduation."""
+
     backtest_interval: str = "1d"
     backtest_universe: str = ""
     backtest_lookback_days: int = 180
@@ -110,18 +154,14 @@ class Settings(BaseSettings):
     gate_max_drawdown: float = 0.25
     gate_min_total_return: float = 0.0
 
-    # Phase 8 — hardening: resilience + worker sharding
+
+class WorkerSettingsMixin(BaseSettings):
+    """Phase 8 — hardening: resilience + worker sharding."""
+
     provider_failure_threshold: int = 5
     provider_reset_timeout_seconds: float = 30.0
     worker_shards: int = 1
     worker_shard_id: int = 0
-
-    @field_validator("postgres_port")
-    @classmethod
-    def _port_range(cls, value: int) -> int:
-        if not 1 <= value <= 65535:
-            raise ValueError("postgres_port out of range")
-        return value
 
     @field_validator("worker_shard_id")
     @classmethod
@@ -131,37 +171,33 @@ class Settings(BaseSettings):
             raise ValueError("worker_shard_id must be in [0, worker_shards)")
         return value
 
-    @property
-    def database_url(self) -> str:
-        return (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
-            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-        )
+
+class Settings(
+    DatabaseSettingsMixin,
+    ApiSettingsMixin,
+    MarketDataSettingsMixin,
+    AnalysisSettingsMixin,
+    PredictionSettingsMixin,
+    TradingSettingsMixin,
+    BacktestSettingsMixin,
+    WorkerSettingsMixin,
+    BaseSettings,
+):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    qtrader_mode: TradingMode = TradingMode.BACKTEST
+    enable_live_trading: bool = False
+    log_level: str = "INFO"
 
     @property
     def live_enabled(self) -> bool:
         """Live trading requires the mode AND the explicit enable flag."""
         return self.qtrader_mode is TradingMode.LIVE and self.enable_live_trading
-
-    @property
-    def watchlist_symbols(self) -> list[str]:
-        """Parsed watchlist (comma-separated, trimmed, uppercased)."""
-        return [s.strip().upper() for s in self.watchlist.split(",") if s.strip()]
-
-    @property
-    def scan_interval(self) -> Interval:
-        """Default intraday interval used by the Market Scanner."""
-        return Interval.M5
-
-    @property
-    def decision_weights_dict(self) -> dict[str, float]:
-        """Parsed per-agent decision weights (e.g. ``technical:0.30,...``)."""
-        weights: dict[str, float] = {}
-        for part in self.decision_weights.split(","):
-            if ":" in part:
-                key, value = part.split(":", 1)
-                weights[key.strip().lower()] = float(value)
-        return weights
 
 
 @lru_cache

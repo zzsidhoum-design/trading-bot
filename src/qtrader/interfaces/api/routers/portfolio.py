@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from qtrader.application.services.dashboard_service import DashboardService
 from qtrader.application.services.portfolio_service import PortfolioService
-from qtrader.application.use_cases.manual_order import (
-    ManualOrder,
-    ManualOrderRequest,
-    NoPriceDataError,
-    OrderRejectedError,
-)
+from qtrader.application.use_cases.manual_order import ManualOrder, ManualOrderRequest
 from qtrader.domain.entities import Order, OrderStatus
+from qtrader.domain.exceptions import NotFoundError
 from qtrader.domain.ports import OrderRepository, PortfolioRepository
 from qtrader.domain.value_objects import TradingMode
 from qtrader.interfaces.api.dependencies import (
@@ -65,7 +61,7 @@ async def portfolio_summary(
 ) -> PortfolioSummary:
     portfolio = await portfolios.default_portfolio()
     if portfolio is None:
-        raise HTTPException(status_code=404, detail="portfolio not found")
+        raise NotFoundError("portfolio not found")
     return PortfolioSummary(
         name=portfolio.name,
         currency=portfolio.currency,
@@ -104,14 +100,7 @@ async def submit_order(
     body: OrderCreate,
     manual_order: ManualOrder = Depends(get_manual_order),
 ) -> OrderOut:
-    try:
-        order = await manual_order.submit(
-            ManualOrderRequest.from_schema(body),
-        )
-    except OrderRejectedError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except NoPriceDataError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    order = await manual_order.submit(ManualOrderRequest.from_schema(body))
     return _order_out(order)
 
 

@@ -12,14 +12,10 @@ from dataclasses import asdict, dataclass
 from statistics import mean, pstdev
 from typing import ClassVar
 
-import structlog
-
 from qtrader.application.agents.base import AgentBase, AgentContext
 from qtrader.domain.events import BackfillCompleted, DomainEvent, ScanCompleted
 from qtrader.domain.ports import Cache, EventBus, PriceRepository, StockRepository
 from qtrader.domain.value_objects import Interval, PriceBar
-
-logger = structlog.get_logger(__name__)
 
 SCAN_ZSET_PREFIX = "scan:top"
 
@@ -96,7 +92,7 @@ class MarketScanner(AgentBase):
         await self._persist_rankings(ranked)
 
         top = ranked[: self._top_k]
-        logger.info(
+        self._logger.info(
             "scanner.scan_completed",
             scanned=len(candidates),
             candidates=len(top),

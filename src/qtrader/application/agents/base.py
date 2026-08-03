@@ -12,6 +12,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import ClassVar
 
+import structlog
+
+from qtrader.config.logging import get_logger
 from qtrader.domain.events import DomainEvent
 from qtrader.domain.value_objects import Interval
 
@@ -30,6 +33,10 @@ class AgentBase(ABC):
     name: ClassVar[str]
     consumes: ClassVar[tuple[type[DomainEvent], ...]] = ()
     produces: ClassVar[tuple[type[DomainEvent], ...]] = ()
+
+    @property
+    def _logger(self) -> structlog.stdlib.BoundLogger:
+        return get_logger(f"qtrader.agent.{self.name}")
 
     @abstractmethod
     async def run(self, ctx: AgentContext) -> None:

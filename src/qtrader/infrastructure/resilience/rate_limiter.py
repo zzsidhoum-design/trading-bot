@@ -10,9 +10,9 @@ from __future__ import annotations
 import asyncio
 import time
 
-import structlog
+from qtrader.config.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 
 class TokenBucket:

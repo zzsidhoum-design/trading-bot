@@ -129,6 +129,16 @@ class FakeContainer:
     async def cache_healthy(self) -> bool:
         return True
 
+    def circuit_breakers(self) -> list[dict[str, object]]:
+        return [
+            {
+                "name": "yahoo",
+                "state": "closed",
+                "consecutive_failures": 0,
+                "reset_timeout_seconds": 30.0,
+            }
+        ]
+
     async def aclose(self) -> None:
         return None
 
@@ -196,6 +206,14 @@ async def test_latest_price_unknown_symbol_404(client: httpx.AsyncClient) -> Non
 
 
 @pytest.mark.asyncio
+async def test_domain_error_body_has_typed_code(client: httpx.AsyncClient) -> None:
+    resp = await _get(client, "/api/v1/stocks/ZZZZ/price")
+    body = resp.json()
+    assert body["error"] == "no_price_data"
+    assert body["detail"] == "no price data for symbol 'ZZZZ'"
+
+
+@pytest.mark.asyncio
 async def test_price_history(client: httpx.AsyncClient) -> None:
     resp = await _get(client, "/api/v1/stocks/AAPL/history?interval=5m")
     assert resp.status_code == 200
@@ -211,3 +229,15 @@ async def test_portfolio_summary(client: httpx.AsyncClient) -> None:
     body = resp.json()
     assert body["current_cash"] == "65000.000000"
     assert body["mode"] == "backtest"
+
+
+@pytest.mark.asyncio
+async def test_system_metrics_snapshot(client: httpx.AsyncClient) -> None:
+    resp = await _get(client, "/api/v1/system/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mode"] == "backtest"
+    assert body["database"] == "ok"
+    assert body["cache"] == "ok"
+    assert body["uptime_seconds"] >= 0
+    assert body["circuit_breakers"][0]["name"] == "yahoo"

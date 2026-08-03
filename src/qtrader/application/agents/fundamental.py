@@ -10,8 +10,6 @@ from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 from typing import ClassVar
 
-import structlog
-
 from qtrader.application.agents.base import AgentBase, AgentContext
 from qtrader.application.services.fundamental_score import score_fundamentals
 from qtrader.domain.entities import FundamentalData, Signal
@@ -22,8 +20,6 @@ from qtrader.domain.ports import (
     FundamentalRepository,
     SignalRepository,
 )
-
-logger = structlog.get_logger(__name__)
 
 SCORE_QUANT = Decimal("0.0001")
 
@@ -77,7 +73,7 @@ class FundamentalAgent(AgentBase):
             metadata={"period": data.period, "sub_scores": sub_scores},
         )
         await self._signals.save(signal)
-        logger.info("fundamental.signal", symbol=symbol, signal_type=signal_type, score=score)
+        self._logger.info("fundamental.signal", symbol=symbol, signal_type=signal_type, score=score)
         await self._bus.publish(
             FundamentalSignalGenerated(
                 symbol=symbol,
@@ -102,7 +98,7 @@ class FundamentalAgent(AgentBase):
                 if await self.analyze_symbol(symbol) is not None:
                     scored += 1
             except Exception:
-                logger.exception("fundamental.analyze_failed", symbol=symbol)
+                self._logger.exception("fundamental.analyze_failed", symbol=symbol)
         return scored
 
     async def on_event(self, event: DomainEvent) -> None:

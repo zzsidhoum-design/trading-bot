@@ -17,14 +17,12 @@ from qtrader.domain.entities import Portfolio, Stock
 from qtrader.domain.ports import PortfolioRepository, PriceRepository, StockRepository
 from qtrader.domain.value_objects import Interval, Money, PriceBar, TradingMode
 from qtrader.infrastructure.database.models import PortfolioModel, PriceModel, StockModel
+from qtrader.infrastructure.database.repositories.base import SessionBoundRepo
 
 
-class SQLAlchemyStockRepository(StockRepository):
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
-        self._session_factory = session_factory
-
+class SQLAlchemyStockRepository(SessionBoundRepo, StockRepository):
     async def upsert(self, stock: Stock) -> Stock:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             result = await session.execute(
                 select(StockModel).where(
                     StockModel.symbol == stock.symbol, StockModel.exchange == stock.exchange
@@ -47,7 +45,8 @@ class SQLAlchemyStockRepository(StockRepository):
                 row.sector = stock.sector or row.sector
                 row.industry = stock.industry or row.industry
                 row.is_active = stock.is_active
-            await session.commit()
+            await session.flush()
+            await self._commit(session)
             return Stock(
                 symbol=row.symbol,
                 exchange=row.exchange,
@@ -60,7 +59,7 @@ class SQLAlchemyStockRepository(StockRepository):
             )
 
     async def get_by_symbol(self, symbol: str, exchange: str | None = None) -> Stock | None:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             query = select(StockModel).where(StockModel.symbol == symbol)
             if exchange is not None:
                 query = query.where(StockModel.exchange == exchange)
@@ -68,14 +67,14 @@ class SQLAlchemyStockRepository(StockRepository):
             return self._to_domain(row) if row else None
 
     async def list_active(self) -> list[Stock]:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             rows = await session.scalars(select(StockModel).where(StockModel.is_active.is_(True)))
             return [self._to_domain(r) for r in rows]
 
     async def search(
         self, query: str | None, sector: str | None, limit: int, offset: int
     ) -> list[Stock]:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             stmt = select(StockModel).where(StockModel.is_active.is_(True))
             if query:
                 stmt = stmt.where(StockModel.symbol.ilike(f"%{query}%"))
@@ -98,12 +97,9 @@ class SQLAlchemyStockRepository(StockRepository):
         )
 
 
-class SQLAlchemyPortfolioRepository(PortfolioRepository):
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
-        self._session_factory = session_factory
-
+class SQLAlchemyPortfolioRepository(SessionBoundRepo, PortfolioRepository):
     async def create(self, portfolio: Portfolio) -> Portfolio:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             row = PortfolioModel(
                 name=portfolio.name,
                 currency=portfolio.currency,
@@ -113,7 +109,8 @@ class SQLAlchemyPortfolioRepository(PortfolioRepository):
                 status=portfolio.status,
             )
             session.add(row)
-            await session.commit()
+            await session.flush()
+            await self._commit(session)
             return Portfolio(
                 name=row.name,
                 currency=row.currency,
@@ -125,7 +122,7 @@ class SQLAlchemyPortfolioRepository(PortfolioRepository):
             )
 
     async def get(self, portfolio_id: int) -> Portfolio | None:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             row = await session.get(PortfolioModel, portfolio_id)
             if row is None:
                 return None
@@ -140,7 +137,7 @@ class SQLAlchemyPortfolioRepository(PortfolioRepository):
             )
 
     async def first(self) -> Portfolio | None:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             row = await session.scalar(
                 select(PortfolioModel).order_by(PortfolioModel.id).limit(1)
             )
@@ -158,7 +155,7 @@ class SQLAlchemyPortfolioRepository(PortfolioRepository):
 
     async def save(self, portfolio: Portfolio) -> Portfolio:
         assert portfolio.portfolio_id is not None
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             row = await session.get(PortfolioModel, portfolio.portfolio_id)
             if row is None:
                 raise ValueError(f"portfolio {portfolio.portfolio_id} not found")
@@ -168,7 +165,7 @@ class SQLAlchemyPortfolioRepository(PortfolioRepository):
             row.current_cash = portfolio.current_cash.amount
             row.mode = portfolio.mode
             row.status = portfolio.status
-            await session.commit()
+            await self._commit(session)
             return portfolio
 
 

@@ -1,4 +1,4 @@
-﻿"""Ports â€” the interfaces the domain/application depend on (DIP).
+﻿"""Ports — the interfaces the domain/application depend on (DIP).
 
 Infrastructure adapters implement these. Nothing outside this package may be
 imported here; these are pure ABC/Protocol definitions.
@@ -8,11 +8,41 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
+from datetime import datetime
+from decimal import Decimal
 from typing import Any, TypeVar
 
-from qtrader.domain.entities import AgentEvidence, DecisionOutcome
+from qtrader.domain.entities import (
+    AgentEvidence,
+    AgentMetric,
+    BacktestRun,
+    DecisionOutcome,
+    DecisionRecord,
+    FundamentalData,
+    IndicatorSnapshot,
+    NewsItem,
+    Order,
+    PerformanceSummary,
+    Portfolio,
+    Position,
+    Prediction,
+    RegisteredModel,
+    RiskAssessment,
+    Signal,
+    Stock,
+    SystemLog,
+    Trade,
+)
 from qtrader.domain.events import DomainEvent
-from qtrader.domain.value_objects import OrderFill, PriceBar
+from qtrader.domain.value_objects import (
+    Interval,
+    Money,
+    OrderFill,
+    OrderPlan,
+    OrderStatus,
+    PriceBar,
+    TradingMode,
+)
 
 T = TypeVar("T")
 EventHandler = Callable[[DomainEvent], Awaitable[None]]
@@ -76,7 +106,33 @@ class Lock(ABC):
 
 
 class UnitOfWork(ABC):
-    """Transaction boundary. Commit on success, rollback on error."""
+    """Transaction boundary spanning multiple repositories.
+
+    Implementations bind the trading repositories to one shared session:
+    ``commit`` makes all writes visible atomically, ``rollback`` discards
+    them. Also usable as ``async with`` context manager (commits on clean
+    exit, rolls back on error).
+    """
+
+    @property
+    @abstractmethod
+    def stocks(self) -> StockRepository: ...
+
+    @property
+    @abstractmethod
+    def portfolios(self) -> PortfolioRepository: ...
+
+    @property
+    @abstractmethod
+    def positions(self) -> PositionRepository: ...
+
+    @property
+    @abstractmethod
+    def orders(self) -> OrderRepository: ...
+
+    @property
+    @abstractmethod
+    def trades(self) -> TradeRepository: ...
 
     @abstractmethod
     async def commit(self) -> None: ...
@@ -84,21 +140,39 @@ class UnitOfWork(ABC):
     @abstractmethod
     async def rollback(self) -> None: ...
 
+    @abstractmethod
+    async def __aenter__(self) -> UnitOfWork: ...
+
+    @abstractmethod
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: Any | None,
+    ) -> None: ...
+
+
+class UnitOfWorkFactory(ABC):
+    """Builds a UnitOfWork scoping multiple repository writes to one transaction."""
+
+    @abstractmethod
+    def __call__(self) -> UnitOfWork: ...
+
 
 class StockRepository(ABC):
     @abstractmethod
-    async def upsert(self, stock: Any) -> Any: ...
+    async def upsert(self, stock: Stock) -> Stock: ...
 
     @abstractmethod
-    async def get_by_symbol(self, symbol: str, exchange: str | None = None) -> Any | None: ...
+    async def get_by_symbol(self, symbol: str, exchange: str | None = None) -> Stock | None: ...
 
     @abstractmethod
-    async def list_active(self) -> list[Any]: ...
+    async def list_active(self) -> list[Stock]: ...
 
     @abstractmethod
     async def search(
         self, query: str | None, sector: str | None, limit: int, offset: int
-    ) -> list[Any]: ...
+    ) -> list[Stock]: ...
 
 
 class PriceRepository(ABC):
@@ -106,135 +180,139 @@ class PriceRepository(ABC):
     async def upsert_bars(self, bars: list[PriceBar]) -> int: ...
 
     @abstractmethod
-    async def latest(self, symbol: str, interval: Any) -> PriceBar | None: ...
+    async def latest(self, symbol: str, interval: Interval) -> PriceBar | None: ...
 
     @abstractmethod
     async def history(
         self,
         symbol: str,
-        interval: Any,
-        start: Any | None = None,
-        end: Any | None = None,
+        interval: Interval,
+        start: datetime | None = None,
+        end: datetime | None = None,
         limit: int = 500,
     ) -> list[PriceBar]: ...
 
 
 class PortfolioRepository(ABC):
     @abstractmethod
-    async def create(self, portfolio: Any) -> Any: ...
+    async def create(self, portfolio: Portfolio) -> Portfolio: ...
 
     @abstractmethod
-    async def get(self, portfolio_id: int) -> Any | None: ...
+    async def get(self, portfolio_id: int) -> Portfolio | None: ...
 
     @abstractmethod
-    async def first(self) -> Any | None:
+    async def first(self) -> Portfolio | None:
         """Return any existing portfolio (lowest id), or None."""
 
     @abstractmethod
-    async def save(self, portfolio: Any) -> Any: ...
+    async def save(self, portfolio: Portfolio) -> Portfolio: ...
 
 
 class PositionRepository(ABC):
     @abstractmethod
-    async def open_positions(self, portfolio_id: int) -> list[Any]: ...
+    async def open_positions(self, portfolio_id: int) -> list[Position]: ...
 
     @abstractmethod
-    async def save(self, position: Any) -> Any: ...
+    async def save(self, position: Position) -> Position: ...
 
 
 class OrderRepository(ABC):
     @abstractmethod
-    async def create(self, order: Any) -> Any: ...
+    async def create(self, order: Order) -> Order: ...
 
     @abstractmethod
-    async def save(self, order: Any) -> Any: ...
+    async def save(self, order: Order) -> Order: ...
 
     @abstractmethod
-    async def get_by_idempotency_key(self, key: str) -> Any | None: ...
+    async def get_by_idempotency_key(self, key: str) -> Order | None: ...
 
     @abstractmethod
     async def list_by_portfolio(
-        self, portfolio_id: int, status: Any | None = None, limit: int = 100
-    ) -> list[Any]: ...
+        self, portfolio_id: int, status: OrderStatus | None = None, limit: int = 100
+    ) -> list[Order]: ...
 
 
 class SignalRepository(ABC):
     @abstractmethod
-    async def save(self, signal: Any) -> Any: ...
+    async def save(self, signal: Signal) -> Signal: ...
 
     @abstractmethod
-    async def latest_for_symbol(self, symbol: str, agent: str | None = None) -> list[Any]: ...
+    async def latest_for_symbol(self, symbol: str, agent: str | None = None) -> list[Signal]: ...
 
 
 class IndicatorRepository(ABC):
     @abstractmethod
-    async def save_snapshot(self, snapshot: Any) -> None: ...
+    async def save_snapshot(self, snapshot: IndicatorSnapshot) -> None: ...
 
     @abstractmethod
-    async def latest(self, symbol: str, interval: Any) -> Any | None: ...
+    async def latest(self, symbol: str, interval: Interval) -> IndicatorSnapshot | None: ...
 
 
 class NewsRepository(ABC):
     @abstractmethod
-    async def upsert(self, items: list[Any]) -> int: ...
+    async def upsert(self, items: list[NewsItem]) -> int: ...
 
     @abstractmethod
-    async def recent(self, symbol: str | None, since: Any, limit: int) -> list[Any]: ...
+    async def recent(
+        self, symbol: str | None, since: datetime | None, limit: int
+    ) -> list[NewsItem]: ...
 
 
 class FundamentalRepository(ABC):
     @abstractmethod
-    async def upsert(self, data: Any) -> Any: ...
+    async def upsert(self, data: FundamentalData) -> FundamentalData: ...
 
     @abstractmethod
-    async def latest(self, symbol: str) -> Any | None: ...
+    async def latest(self, symbol: str) -> FundamentalData | None: ...
 
 
 class PredictionRepository(ABC):
     @abstractmethod
-    async def save(self, prediction: Any) -> Any: ...
+    async def save(self, prediction: Prediction) -> Prediction: ...
 
     @abstractmethod
-    async def latest_for_symbol(self, symbol: str, limit: int = 20) -> list[Any]: ...
+    async def latest_for_symbol(self, symbol: str, limit: int = 20) -> list[Prediction]: ...
 
 
 class RiskRepository(ABC):
     """Persisted risk-gate evaluations (``risk_history``)."""
 
     @abstractmethod
-    async def record(self, assessment: Any) -> Any: ...
+    async def record(self, assessment: RiskAssessment) -> RiskAssessment: ...
 
     @abstractmethod
-    async def recent(self, limit: int = 50) -> list[Any]: ...
+    async def recent(self, limit: int = 50) -> list[RiskAssessment]: ...
 
 
 class TradeRepository(ABC):
     """Closed P/L records (Memory System core)."""
 
     @abstractmethod
-    async def record(self, trade: Any) -> Any: ...
+    async def record(self, trade: Trade) -> Trade: ...
 
 
 class AllocationPolicy(ABC):
     """Capital allocation strategy — turns a risk-approved plan into a size."""
 
     @abstractmethod
-    def quantity_for(self, plan: Any, cash: Any, open_positions: int) -> Any: ...
+    def quantity_for(self, plan: OrderPlan, cash: Money, open_positions: int) -> Decimal: ...
 
 
 class DecisionRepository(ABC):
     @abstractmethod
-    async def save(self, record: Any) -> Any: ...
+    async def save(self, record: DecisionRecord) -> DecisionRecord: ...
 
     @abstractmethod
-    async def latest_for_symbol(self, symbol: str, limit: int = 20) -> list[Any]: ...
+    async def latest_for_symbol(
+        self, symbol: str, limit: int = 20
+    ) -> list[DecisionRecord]: ...
 
 
 class ModelRepository(ABC):
     """Versioned ML model registry (active version used for inference)."""
 
     @abstractmethod
-    async def load_active(self, name: str) -> Any | None: ...
+    async def load_active(self, name: str) -> RegisteredModel | None: ...
 
     @abstractmethod
     async def create_version(
@@ -272,37 +350,39 @@ class BacktestRepository(ABC):
     """Persistence for backtest runs (``backtest_runs``)."""
 
     @abstractmethod
-    async def create(self, run: Any) -> Any: ...
+    async def create(self, run: BacktestRun) -> BacktestRun: ...
 
     @abstractmethod
-    async def save(self, run: Any) -> Any: ...
+    async def save(self, run: BacktestRun) -> BacktestRun: ...
 
     @abstractmethod
-    async def get(self, run_id: int) -> Any | None: ...
+    async def get(self, run_id: int) -> BacktestRun | None: ...
 
     @abstractmethod
-    async def latest(self, name: str | None = None, limit: int = 5) -> list[Any]: ...
+    async def latest(self, name: str | None = None, limit: int = 5) -> list[BacktestRun]: ...
 
 
 class PerformanceRepository(ABC):
     """Aggregate strategy metrics (``strategy_performance``)."""
 
     @abstractmethod
-    async def upsert(self, summary: Any) -> Any: ...
+    async def upsert(self, summary: PerformanceSummary) -> PerformanceSummary: ...
 
     @abstractmethod
-    async def latest_for_strategy(self, strategy: str, mode: Any) -> Any | None: ...
+    async def latest_for_strategy(
+        self, strategy: str, mode: TradingMode
+    ) -> PerformanceSummary | None: ...
 
 
 class SystemLogRepository(ABC):
     """Audit/journal entries (``system_logs``)."""
 
     @abstractmethod
-    async def record(self, entry: Any) -> Any: ...
+    async def record(self, entry: SystemLog) -> SystemLog: ...
 
 
 # --------------------------------------------------------------------------- #
-# External adapters (defined now to fix contracts; implemented in later phases)
+# External adapters
 # --------------------------------------------------------------------------- #
 
 
@@ -311,7 +391,7 @@ class MarketDataProvider(ABC):
 
     @abstractmethod
     async def fetch_bars(
-        self, symbol: str, interval: Any, start: Any, end: Any
+        self, symbol: str, interval: Interval, start: datetime, end: datetime
     ) -> list[PriceBar]: ...
 
     @abstractmethod
@@ -322,13 +402,15 @@ class BrokerGateway(ABC):
     """Execution contract shared by Paper/Alpaca/IBKR/Backtest brokers."""
 
     @abstractmethod
-    async def submit_order(self, order: Any) -> str: ...
+    async def submit_order(self, order: Order) -> str: ...
 
     @abstractmethod
     async def cancel_order(self, broker_order_id: str) -> None: ...
 
     @abstractmethod
-    async def modify_brackets(self, position_id: str, stop_loss: Any, take_profit: Any) -> None: ...
+    async def modify_brackets(
+        self, position_id: str, stop_loss: Money, take_profit: Money
+    ) -> None: ...
 
     @abstractmethod
     async def get_order_status(self, broker_order_id: str) -> OrderFill: ...
@@ -339,14 +421,16 @@ class BrokerGateway(ABC):
 
 class NewsProvider(ABC):
     @abstractmethod
-    async def fetch_news(self, symbol: str | None, since: Any, limit: int) -> list[Any]: ...
+    async def fetch_news(
+        self, symbol: str | None, since: datetime, limit: int
+    ) -> list[NewsItem]: ...
 
 
 class FundamentalProvider(ABC):
     """Source of financial statements / valuation metrics."""
 
     @abstractmethod
-    async def fetch_fundamentals(self, symbol: str) -> Any | None: ...
+    async def fetch_fundamentals(self, symbol: str) -> FundamentalData | None: ...
 
 
 class LLMClient(ABC):
@@ -364,27 +448,30 @@ class DashboardQueries(ABC):
     """
 
     @abstractmethod
-    async def positions(self, portfolio_id: int) -> list[Any]: ...
+    async def positions(self, portfolio_id: int) -> list[Position]: ...
 
     @abstractmethod
     async def trades(
-        self, portfolio_id: int, since: Any | None = None, limit: int = 100
-    ) -> list[Any]: ...
+        self, portfolio_id: int, since: datetime | None = None, limit: int = 100
+    ) -> list[Trade]: ...
 
     @abstractmethod
     async def logs(
         self, level: str | None = None, component: str | None = None, limit: int = 50
-    ) -> list[Any]: ...
+    ) -> list[SystemLog]: ...
 
     @abstractmethod
     async def agent_metrics(
         self, agent_name: str | None = None, limit: int = 50
-    ) -> list[Any]: ...
+    ) -> list[AgentMetric]: ...
 
     @abstractmethod
     async def performance(
-        self, strategy: str | None = None, mode: Any | None = None, limit: int = 50
-    ) -> list[Any]: ...
+        self,
+        strategy: str | None = None,
+        mode: TradingMode | None = None,
+        limit: int = 50,
+    ) -> list[PerformanceSummary]: ...
 
     @abstractmethod
-    async def models(self) -> list[Any]: ...
+    async def models(self) -> list[RegisteredModel]: ...

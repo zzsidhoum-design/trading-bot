@@ -5,11 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from qtrader.application.agents.base import AgentContext
 from qtrader.application.agents.registry import default_registry
 from qtrader.config.settings import Settings
+from qtrader.domain.exceptions import NotFoundError
 from qtrader.domain.value_objects import Interval
 from qtrader.interfaces.api.dependencies import get_container, get_settings, require_api_key
 from qtrader.interfaces.api.schemas import AgentRunRequest, AgentRunResult
@@ -48,7 +49,7 @@ async def run_agent(
     registry = default_registry()
     cls = registry.get(name)
     if cls is None:
-        raise HTTPException(status_code=404, detail=f"unknown agent {name!r}")
+        raise NotFoundError(f"unknown agent {name!r}")
     end = datetime.now(UTC)
     start = end - timedelta(days=body.days)
     ctx = AgentContext(

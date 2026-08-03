@@ -2,6 +2,14 @@
 
 Each task receives ``ctx`` with ``redis`` (arq's connection) and any kwargs
 from the cron entry. Tasks must be idempotent — arq guarantees at-least-once.
+The DI container is created once in ``on_startup``, stored in ``ctx`` and
+closed in ``on_shutdown`` so every task shares a single engine/redis/event bus.
+
+The trading pipeline is event-driven: ``scan_cycle`` publishes
+``ScanCompleted`` and the subscribed agents cascade through analysis,
+prediction, decisions, risk, allocation and execution on the in-process
+event bus. ``execute_cycle`` is a safety net that submits any PENDING
+orders left behind (e.g. created via the API or after a crash).
 """
 
 from __future__ import annotations
@@ -14,6 +22,35 @@ from arq.connections import RedisSettings
 
 from qtrader.config.settings import Settings
 from qtrader.domain.value_objects import Interval
+
+CONTAINER_KEY = "container"
+
+
+def _container(ctx: dict[str, Any]) -> Any:
+    """The shared worker container, created in ``on_startup``."""
+    from qtrader.config.container import Container
+
+    container = ctx.get(CONTAINER_KEY)
+    if not isinstance(container, Container):
+        raise RuntimeError(
+            f"worker {CONTAINER_KEY!r} not initialized (missing on_startup hook?)"
+        )
+    return container
+
+
+async def _startup(ctx: dict[str, Any]) -> None:
+    """Create the process-wide container once and share it via ctx."""
+    from qtrader.config.container import get_container
+
+    ctx[CONTAINER_KEY] = get_container()
+
+
+async def _shutdown(ctx: dict[str, Any]) -> None:
+    """Close the shared container so the worker exits cleanly."""
+    container = ctx.get(CONTAINER_KEY)
+    if container is not None:
+        await container.aclose()
+        ctx[CONTAINER_KEY] = None
 
 
 def _owned(symbols: list[str]) -> list[str]:
@@ -28,10 +65,9 @@ async def heartbeat(ctx: dict[str, Any]) -> str:
     """Prove the worker is alive: round-trip through the shared cache/DB."""
     from redis.asyncio import Redis
 
-    from qtrader.config.container import get_container
     from qtrader.infrastructure.cache import RedisCache
 
-    container = get_container()
+    container = _container(ctx)
     cache = RedisCache(container.resolve(Redis))
     await cache.set("worker:heartbeat", "1", ttl_seconds=300)
     db_ok = await container.database_healthy()
@@ -46,9 +82,8 @@ async def backfill(
 ) -> str:
     """Data Agent job: pull clean history for the watchlist (or one symbol)."""
     from qtrader.application.agents.data import DataAgent
-    from qtrader.config.container import get_container
 
-    container = get_container()
+    container = _container(ctx)
     settings = container.resolve(Settings)
     agent = container.resolve(DataAgent)
     iv = Interval(interval) if interval else settings.scan_interval
@@ -64,116 +99,27 @@ async def backfill(
 
 
 async def scan_cycle(ctx: dict[str, Any]) -> str:
-    """Market Scanner cycle: recompute top-K rankings."""
-    from qtrader.application.agents.scanner import MarketScanner
-    from qtrader.config.container import get_container
+    """Market Scanner pulse: recompute top-K rankings.
 
-    container = get_container()
+    Publishing ``ScanCompleted`` cascades the whole pipeline through the
+    event bus (analysis → prediction → decisions → risk → execution).
+    """
+    from qtrader.application.agents.scanner import MarketScanner
+
+    container = _container(ctx)
     scanner = container.resolve(MarketScanner)
     top = await scanner.scan_all()
     return f"scan produced {len(top)} candidates"
-
-
-async def analyze_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -> str:
-    """Phase 3 analysis cycle: technical, news & fundamental for the candidates."""
-    from qtrader.application.agents.fundamental import FundamentalAgent
-    from qtrader.application.agents.news import NewsAgent
-    from qtrader.application.agents.scanner import MarketScanner
-    from qtrader.application.agents.technical import TechnicalAgent
-    from qtrader.config.container import get_container
-
-    container = get_container()
-    scanner = container.resolve(MarketScanner)
-    if symbols is None:
-        top = await scanner.scan_all()
-        symbols = [c.symbol for c in top]
-    symbols = _owned(symbols)
-    technical = await container.resolve(TechnicalAgent).analyze_candidates(symbols)
-    news = await container.resolve(NewsAgent).analyze_candidates(symbols)
-    fundamental = await container.resolve(FundamentalAgent).analyze_candidates(symbols)
-    return (
-        f"analyzed {len(symbols)} symbols: "
-        f"technical={technical} news={news} fundamental={fundamental}"
-    )
-
-
-async def predict_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -> str:
-    """Prediction cycle: probability-of-movement for the current candidates."""
-    from qtrader.application.agents.prediction import PredictionAgent
-    from qtrader.application.agents.scanner import MarketScanner
-    from qtrader.config.container import get_container
-
-    container = get_container()
-    scanner = container.resolve(MarketScanner)
-    if symbols is None:
-        top = await scanner.scan_all()
-        symbols = [c.symbol for c in top]
-    symbols = _owned(symbols)
-    predicted = await container.resolve(PredictionAgent).predict_candidates(symbols)
-    return f"predicted {predicted}/{len(symbols)} symbols"
-
-
-async def decide_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -> str:
-    """Chief cycle: fused BUY/SELL/HOLD decisions for the current candidates."""
-    from qtrader.application.agents.chief import ChiefAgent
-    from qtrader.application.agents.scanner import MarketScanner
-    from qtrader.config.container import get_container
-
-    container = get_container()
-    scanner = container.resolve(MarketScanner)
-    if symbols is None:
-        top = await scanner.scan_all()
-        symbols = [c.symbol for c in top]
-    symbols = _owned(symbols)
-    decided = await container.resolve(ChiefAgent).decide_candidates(symbols)
-    return f"decided {decided}/{len(symbols)} symbols"
-
-
-async def risk_cycle(ctx: dict[str, Any]) -> str:
-    """Phase 5 risk gate: re-assess the latest decision for each candidate."""
-    from qtrader.application.agents.risk import RiskAgent
-    from qtrader.application.agents.scanner import MarketScanner
-    from qtrader.config.container import get_container
-    from qtrader.domain.events import DecisionMade
-    from qtrader.domain.ports import DecisionRepository
-    from qtrader.domain.value_objects import Decision
-
-    container = get_container()
-    scanner = container.resolve(MarketScanner)
-    decisions = container.resolve(DecisionRepository)
-    top = await scanner.scan_all()
-    approved = rejected = 0
-    for symbol in _owned([c.symbol for c in top]):
-        latest = await decisions.latest_for_symbol(symbol, limit=1)
-        if not latest or latest[0].decision is Decision.HOLD:
-            continue
-        record = latest[0]
-        assessment = await container.resolve(RiskAgent).assess_symbol(
-            DecisionMade(
-                decision_uuid=record.decision_uuid,
-                symbol=symbol,
-                decision=record.decision,
-                confidence=float(record.confidence or 0),
-                rationale=record.rationale or "",
-                agent_scores=record.agent_scores,
-            )
-        )
-        if assessment.approved:
-            approved += 1
-        else:
-            rejected += 1
-    return f"risk gate: approved={approved} rejected={rejected}"
 
 
 async def execute_cycle(ctx: dict[str, Any]) -> str:
     """Phase 5 execution cycle: submit any pending (unsubmitted) orders."""
     from qtrader.application.agents.execution import ExecutionAgent
     from qtrader.application.services.portfolio_service import PortfolioService
-    from qtrader.config.container import get_container
     from qtrader.domain.ports import OrderRepository
     from qtrader.domain.value_objects import OrderStatus
 
-    container = get_container()
+    container = _container(ctx)
     portfolio = await container.resolve(PortfolioService).default_portfolio()
     pending = await container.resolve(OrderRepository).list_by_portfolio(
         portfolio.portfolio_id or 1, status=OrderStatus.PENDING.value, limit=50
@@ -189,9 +135,8 @@ async def execute_cycle(ctx: dict[str, Any]) -> str:
 async def train_cycle(ctx: dict[str, Any], symbols: list[str] | None = None) -> str:
     """Nightly model training: fit + register + promote when the threshold passes."""
     from qtrader.application.services.model_trainer import ModelTrainer
-    from qtrader.config.container import get_container
 
-    container = get_container()
+    container = _container(ctx)
     settings = container.resolve(Settings)
     if symbols is None:
         symbols = settings.watchlist_symbols
@@ -219,10 +164,9 @@ async def backtest_cycle(ctx: dict[str, Any]) -> str:
 
     from qtrader.application.services.backtest import BacktestParams, BacktestRunner
     from qtrader.application.services.system_gate import SystemGate
-    from qtrader.config.container import get_container
     from qtrader.domain.value_objects import Interval, TradingMode
 
-    container = get_container()
+    container = _container(ctx)
     settings = container.resolve(Settings)
     if settings.backtest_universe:
         symbols = [s.strip().upper() for s in settings.backtest_universe.split(",") if s.strip()]
@@ -260,10 +204,6 @@ class WorkerSettings:
         heartbeat,
         backfill,
         scan_cycle,
-        analyze_cycle,
-        predict_cycle,
-        decide_cycle,
-        risk_cycle,
         execute_cycle,
         train_cycle,
         backtest_cycle,
@@ -272,16 +212,15 @@ class WorkerSettings:
     cron_jobs = [
         cron(heartbeat, name="heartbeat", second=0),
         cron(scan_cycle, name="scan_cycle", minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
-        cron(analyze_cycle, name="analyze_cycle", minute={2, 17, 32, 47}),
-        cron(predict_cycle, name="predict_cycle", minute={4, 19, 34, 49}),
-        cron(decide_cycle, name="decide_cycle", minute={6, 21, 36, 51}),
-        cron(risk_cycle, name="risk_cycle", minute={7, 22, 37, 52}),
         cron(execute_cycle, name="execute_cycle", minute={8, 23, 38, 53}),
         cron(train_cycle, name="train_cycle", hour={2}, minute=0),
         cron(backtest_cycle, name="backtest_cycle", hour={3}, minute=0),
     ]
 
     redis_settings = RedisSettings.from_dsn(Settings().redis_url)
+
+    on_startup = _startup
+    on_shutdown = _shutdown
 
     max_tries = 3
     job_timeout = 60

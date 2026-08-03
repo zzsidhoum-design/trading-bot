@@ -24,9 +24,9 @@ from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from typing import Any
 
-import structlog
+from qtrader.config.logging import get_logger
 
-logger = structlog.get_logger(__name__)
+logger = get_logger(__name__)
 
 StateChangeCallback = Callable[[str, str], None]
 

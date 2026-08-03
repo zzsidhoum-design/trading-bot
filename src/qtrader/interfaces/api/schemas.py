@@ -29,6 +29,15 @@ class CircuitBreakerSnapshot(BaseModel):
     reset_timeout_seconds: float
 
 
+class SystemMetrics(BaseModel):
+    uptime_seconds: float
+    mode: str
+    live_enabled: bool
+    database: str
+    cache: str
+    circuit_breakers: list[CircuitBreakerSnapshot] = Field(default_factory=list)
+
+
 class ModeToggle(BaseModel):
     mode: str
 

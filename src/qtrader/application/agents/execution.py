@@ -1,5 +1,5 @@
-"""Execution Agent — submits risk-approved allocations to the broker
-(docs/02-agents.md §9).
+﻿"""Execution Agent â€” submits risk-approved allocations to the broker
+(docs/02-agents.md Â§9).
 
 Consumes ``AllocationProposal``, resolves the stock and order, submits through
 the injected :class:`BrokerGateway`, then polls the fill status. On fill it
@@ -10,12 +10,12 @@ updates the position, portfolio cash and order lifecycle, records a closed
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import ClassVar, cast
-
-import structlog
 
 from qtrader.application.agents.base import AgentBase, AgentContext
 from qtrader.application.services.portfolio_service import PortfolioService
@@ -37,6 +37,8 @@ from qtrader.domain.ports import (
     PositionRepository,
     StockRepository,
     TradeRepository,
+    UnitOfWork,
+    UnitOfWorkFactory,
 )
 from qtrader.domain.value_objects import (
     Money,
@@ -46,8 +48,6 @@ from qtrader.domain.value_objects import (
     PositionStatus,
     TradeSide,
 )
-
-logger = structlog.get_logger(__name__)
 
 
 class ExecutionAgent(AgentBase):
@@ -72,6 +72,7 @@ class ExecutionAgent(AgentBase):
         bus: EventBus,
         gate: SystemGate | None = None,
         gate_strategy: str = "ensemble",
+        uow_factory: UnitOfWorkFactory | None = None,
     ) -> None:
         self._broker = broker
         self._portfolios = portfolio_service
@@ -83,6 +84,19 @@ class ExecutionAgent(AgentBase):
         self._bus = bus
         self._gate = gate
         self._gate_strategy = gate_strategy
+        self._uow_factory = uow_factory
+
+    @asynccontextmanager
+    async def _trading_scope(
+        self,
+    ) -> AsyncIterator[tuple[UnitOfWork | None, PortfolioService]]:
+        """Transaction scope for multi-repo writes; falls back to standalone
+        repositories when no UnitOfWork factory is injected."""
+        if self._uow_factory is not None:
+            async with self._uow_factory() as uow:
+                yield uow, self._portfolios.bind(uow.portfolios)
+        else:
+            yield None, self._portfolios
 
     async def execute(self, proposal: AllocationProposal) -> str | None:
         order = await self._resolve_order(proposal)
@@ -97,7 +111,7 @@ class ExecutionAgent(AgentBase):
         if self._gate is not None and not await self._gate.can_trade(
             self._gate_strategy, order.mode
         ):
-            logger.warning(
+            self._logger.warning(
                 "execution.gate_denied",
                 symbol=order.symbol,
                 mode=order.mode.value,
@@ -117,7 +131,7 @@ class ExecutionAgent(AgentBase):
         try:
             broker_order_id = await self._broker.submit_order(order)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("execution.rejected", symbol=order.symbol, error=str(exc))
+            self._logger.warning("execution.rejected", symbol=order.symbol, error=str(exc))
             rejected = replace(order, status=OrderStatus.REJECTED)
             await self._orders.save(rejected)
             await self._bus.publish(
@@ -154,40 +168,54 @@ class ExecutionAgent(AgentBase):
         return broker_order_id
 
     async def _resolve_order(self, proposal: AllocationProposal) -> Order | None:
-        order = await self._orders.get_by_idempotency_key(
-            f"{proposal.decision_uuid}:{proposal.order_id}"
-        )
-        if order is not None:
-            return cast(Order, order)
-        portfolio = await self._portfolios.default_portfolio()
-        portfolio_id = portfolio.portfolio_id
-        assert portfolio_id is not None
-        stock = await self._stocks.get_by_symbol(proposal.symbol)
-        if stock is None:
-            stock = await self._stocks.upsert(
-                Stock(symbol=proposal.symbol, exchange="PAPER", name=proposal.symbol)
+        async with self._trading_scope() as (uow, portfolio_service):
+            orders = uow.orders if uow is not None else self._orders
+            stocks = uow.stocks if uow is not None else self._stocks
+            order = await orders.get_by_idempotency_key(
+                f"{proposal.decision_uuid}:{proposal.order_id}"
             )
-        created = await self._orders.create(
-            Order(
-                portfolio_id=portfolio_id,
-                stock_id=stock.stock_id or 0,
-                side=proposal.side,
-                order_type=OrderType(proposal.order_type),
-                quantity=int(Decimal(proposal.quantity)),
-                mode=proposal.mode,
-                idempotency_key=f"{proposal.decision_uuid}:{proposal.order_id}",
-                limit_price=None,
-                stop_loss=Money(proposal.stop_loss) if proposal.stop_loss else None,
-                take_profit=Money(proposal.take_profit) if proposal.take_profit else None,
-                decision_ref=proposal.decision_uuid,
-                reason={"proposal": True},
-                symbol=proposal.symbol,
-                status=OrderStatus.PENDING,
+            if order is not None:
+                return cast(Order, order)
+            portfolio = await portfolio_service.default_portfolio()
+            portfolio_id = portfolio.portfolio_id
+            assert portfolio_id is not None
+            stock = await stocks.get_by_symbol(proposal.symbol)
+            if stock is None:
+                stock = await stocks.upsert(
+                    Stock(symbol=proposal.symbol, exchange="PAPER", name=proposal.symbol)
+                )
+            created = await orders.create(
+                Order(
+                    portfolio_id=portfolio_id,
+                    stock_id=stock.stock_id or 0,
+                    side=proposal.side,
+                    order_type=OrderType(proposal.order_type),
+                    quantity=int(Decimal(proposal.quantity)),
+                    mode=proposal.mode,
+                    idempotency_key=f"{proposal.decision_uuid}:{proposal.order_id}",
+                    limit_price=None,
+                    stop_loss=Money(proposal.stop_loss) if proposal.stop_loss else None,
+                    take_profit=Money(proposal.take_profit) if proposal.take_profit else None,
+                    decision_ref=proposal.decision_uuid,
+                    reason={"proposal": True},
+                    symbol=proposal.symbol,
+                    status=OrderStatus.PENDING,
+                )
             )
-        )
-        return cast(Order, created)
+            return cast(Order, created)
 
     async def _apply_fill(self, order: Order, fill: OrderFill) -> None:
+        async with self._trading_scope() as (uow, portfolio_service):
+            await self._apply_fill_inner(order, fill, uow, portfolio_service)
+
+    async def _apply_fill_inner(
+        self,
+        order: Order,
+        fill: OrderFill,
+        uow: UnitOfWork | None,
+        portfolio_service: PortfolioService,
+    ) -> None:
+        orders = uow.orders if uow is not None else self._orders
         filled = replace(
             order,
             status=OrderStatus.FILLED,
@@ -195,7 +223,7 @@ class ExecutionAgent(AgentBase):
             avg_fill_price=Money(fill.avg_fill_price),
             commission=Money(fill.commission),
         )
-        await self._orders.save(filled)
+        await orders.save(filled)
         await self._bus.publish(
             OrderFilled(
                 order_id=str(filled.order_id),
@@ -205,14 +233,24 @@ class ExecutionAgent(AgentBase):
                 fees=str(fill.commission),
             )
         )
-        await self._apply_position(filled, fill)
+        await self._apply_position_inner(filled, fill, uow, portfolio_service)
 
-    async def _apply_position(self, order: Order, fill: OrderFill) -> None:
-        portfolio = await self._portfolios.default_portfolio()
+    async def _apply_position_inner(
+        self,
+        order: Order,
+        fill: OrderFill,
+        uow: UnitOfWork | None,
+        portfolio_service: PortfolioService,
+    ) -> None:
+        portfolios_repo = uow.portfolios if uow is not None else self._portfolios_repo
+        positions = uow.positions if uow is not None else self._positions
+        trades = uow.trades if uow is not None else self._trades
+
+        portfolio = await portfolio_service.default_portfolio()
         portfolio_id = portfolio.portfolio_id
         assert portfolio_id is not None
 
-        position = await self._find_position(portfolio_id, order.symbol or "")
+        position = await self._find_position(portfolio_id, order.symbol or "", positions)
         fill_qty = Decimal(fill.filled_qty)
         fill_price = Decimal(fill.avg_fill_price)
         fees = Decimal(fill.commission)
@@ -240,28 +278,32 @@ class ExecutionAgent(AgentBase):
                     stop_loss=order.stop_loss,
                     take_profit=order.take_profit,
                 )
-            await self._positions.save(position)
+            await positions.save(position)
             new_cash = portfolio.current_cash.amount - notional - fees
         else:
-            await self._close_position(position, order, fill_qty, fill_price, fees)
+            await self._close_position_inner(
+                position, order, fill_qty, fill_price, fees, positions, trades
+            )
             new_cash = portfolio.current_cash.amount + notional - fees
 
-        await self._portfolios_repo.save(replace(portfolio, current_cash=Money(new_cash)))
+        await portfolios_repo.save(replace(portfolio, current_cash=Money(new_cash)))
 
-    async def _close_position(
+    async def _close_position_inner(
         self,
         position: Position | None,
         order: Order,
         fill_qty: Decimal,
         fill_price: Decimal,
         fees: Decimal,
+        positions: PositionRepository,
+        trades: TradeRepository,
     ) -> None:
         if position is None:
-            logger.warning("execution.close_missing_position", symbol=order.symbol)
+            self._logger.warning("execution.close_missing_position", symbol=order.symbol)
             return
         remaining = Decimal(position.quantity) - fill_qty
         if remaining > 0:
-            await self._positions.save(replace(position, quantity=int(remaining)))
+            await positions.save(replace(position, quantity=int(remaining)))
             return
 
         cost = position.avg_entry_price.amount * Decimal(position.quantity)
@@ -275,8 +317,8 @@ class ExecutionAgent(AgentBase):
             realized_pnl=Money(realized),
             closed_at=datetime.now(UTC),
         )
-        await self._positions.save(closed)
-        await self._trades.record(
+        await positions.save(closed)
+        await trades.record(
             Trade(
                 portfolio_id=position.portfolio_id,
                 stock_id=position.stock_id,
@@ -304,8 +346,14 @@ class ExecutionAgent(AgentBase):
             )
         )
 
-    async def _find_position(self, portfolio_id: int, symbol: str) -> Position | None:
-        for pos in await self._positions.open_positions(portfolio_id):
+    async def _find_position(
+        self,
+        portfolio_id: int,
+        symbol: str,
+        positions: PositionRepository | None = None,
+    ) -> Position | None:
+        repo = positions if positions is not None else self._positions
+        for pos in await repo.open_positions(portfolio_id):
             if pos.symbol == symbol:
                 return cast(Position, pos)
         return None
@@ -315,7 +363,9 @@ class ExecutionAgent(AgentBase):
             try:
                 await self.execute(event)
             except Exception:
-                logger.exception("execution.execute_failed", symbol=event.symbol)
+                self._logger.exception("execution.execute_failed", symbol=event.symbol)
 
     async def run(self, ctx: AgentContext) -> None:
-        logger.warning("execution.run_standalone", detail="Execution agent is event-driven only")
+        self._logger.warning(
+            "execution.run_standalone", detail="Execution agent is event-driven only"
+        )

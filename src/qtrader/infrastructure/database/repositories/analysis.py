@@ -261,9 +261,13 @@ class SQLAlchemyNewsRepository(NewsRepository):
             await session.commit()
             return result.rowcount or 0
 
-    async def recent(self, symbol: str | None, since: datetime, limit: int) -> list[NewsItem]:
+    async def recent(
+        self, symbol: str | None, since: datetime | None, limit: int
+    ) -> list[NewsItem]:
         async with self._session_factory() as session:
-            stmt = select(NewsModel).where(NewsModel.published_at >= since)
+            stmt = select(NewsModel)
+            if since is not None:
+                stmt = stmt.where(NewsModel.published_at >= since)
             if symbol is not None:
                 stmt = stmt.join(StockModel, StockModel.id == NewsModel.stock_id).where(
                     StockModel.symbol == symbol

@@ -1,4 +1,4 @@
-"""Prediction Agent — probability-of-movement (docs/02-agents.md §6).
+﻿"""Prediction Agent â€” probability-of-movement (docs/02-agents.md Â§6).
 
 Builds a deterministic feature vector via the FeatureStore, runs the active
 model from the registry (falling back to a heuristic when absent), persists a
@@ -9,8 +9,6 @@ from __future__ import annotations
 
 from decimal import ROUND_HALF_UP, Decimal
 from typing import ClassVar
-
-import structlog
 
 from qtrader.application.agents.base import AgentBase, AgentContext
 from qtrader.application.services.feature_store import FeatureStore
@@ -23,8 +21,6 @@ from qtrader.domain.entities import Prediction, RegisteredModel
 from qtrader.domain.events import DomainEvent, PredictionGenerated, ScanCompleted
 from qtrader.domain.ports import EventBus, ModelRepository, PredictionRepository
 from qtrader.domain.value_objects import Interval
-
-logger = structlog.get_logger(__name__)
 
 SCORE_QUANT = Decimal("0.0001")
 RETURN_QUANT = Decimal("0.000001")
@@ -70,7 +66,7 @@ class PredictionAgent(AgentBase):
             symbol, interval, lookback_bars=self._lookback_bars, min_bars=self._min_bars
         )
         if vector is None:
-            logger.warning("prediction.no_features", symbol=symbol, interval=interval)
+            self._logger.warning("prediction.no_features", symbol=symbol, interval=interval)
             return None
 
         registered: RegisteredModel | None = await self._models.load_active(self._model_name)
@@ -102,7 +98,7 @@ class PredictionAgent(AgentBase):
             features_hash=vector.feature_hash,
         )
         await self._predictions.save(prediction)
-        logger.info(
+        self._logger.info(
             "prediction.generated",
             symbol=symbol,
             model=model_name,
@@ -129,7 +125,7 @@ class PredictionAgent(AgentBase):
                 if await self.predict_symbol(symbol) is not None:
                     predicted += 1
             except Exception:
-                logger.exception("prediction.analyze_failed", symbol=symbol)
+                self._logger.exception("prediction.analyze_failed", symbol=symbol)
         return predicted
 
     async def on_event(self, event: DomainEvent) -> None:

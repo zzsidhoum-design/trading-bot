@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from qtrader.application.services.backtest import BacktestParams, BacktestRunner
 from qtrader.domain.entities import BacktestRun
+from qtrader.domain.exceptions import NotFoundError, ValidationError
 from qtrader.domain.ports import BacktestRepository
 from qtrader.domain.value_objects import Interval
 from qtrader.interfaces.api.dependencies import (
@@ -72,7 +73,7 @@ async def submit_backtest(
 ) -> BacktestRunOut:
     symbols = [s.strip().upper() for s in body.symbols if s.strip()]
     if not symbols:
-        raise HTTPException(status_code=422, detail="symbols must not be empty")
+        raise ValidationError("symbols must not be empty")
     try:
         result = await runner.run(
             name=body.name,
@@ -89,7 +90,7 @@ async def submit_backtest(
             ),
         )
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise ValidationError(str(exc)) from exc
     return _run_out(result.run)
 
 
@@ -118,7 +119,7 @@ async def get_backtest(
 ) -> BacktestRunOut:
     run = await repo.get(run_id)
     if run is None:
-        raise HTTPException(status_code=404, detail="backtest run not found")
+        raise NotFoundError("backtest run not found")
     return _run_out(run)
 
 
@@ -135,7 +136,7 @@ async def compare_backtest(
     first = await repo.get(run_id)
     second = await repo.get(body.other_run_id)
     if first is None:
-        raise HTTPException(status_code=404, detail=f"run {run_id} not found")
+        raise NotFoundError(f"run {run_id} not found")
     if second is None:
-        raise HTTPException(status_code=404, detail=f"run {body.other_run_id} not found")
+        raise NotFoundError(f"run {body.other_run_id} not found")
     return [_run_out(first), _run_out(second)]

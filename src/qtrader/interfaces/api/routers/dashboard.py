@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from qtrader.application.services.dashboard_service import DashboardService
+from qtrader.domain.exceptions import NotFoundError
 from qtrader.domain.ports import RiskRepository
 from qtrader.interfaces.api.dependencies import (
     get_dashboard_service,
@@ -39,7 +40,7 @@ async def summary(
 ) -> DashboardSummary:
     result = await dashboard.summary()
     if result is None:
-        raise HTTPException(status_code=404, detail="portfolio not found")
+        raise NotFoundError("portfolio not found")
     return DashboardSummary(
         cash=str(result.cash),
         equity=str(result.equity),

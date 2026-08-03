@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from qtrader.application.services.dashboard_service import DashboardService
 from qtrader.application.services.model_trainer import ModelTrainer
 from qtrader.config.settings import Settings
+from qtrader.domain.exceptions import NotFoundError, ValidationError
 from qtrader.domain.ports import ModelRepository
 from qtrader.interfaces.api.dependencies import (
     get_container,
@@ -61,7 +62,7 @@ async def train_models(
         interval=settings.scan_interval,
     )
     if result is None:
-        raise HTTPException(status_code=422, detail="insufficient samples to train a model")
+        raise ValidationError("insufficient samples to train a model")
     return {
         "name": result.name,
         "version": result.version,
@@ -81,6 +82,6 @@ async def promote_model(
 ) -> dict:
     model = next((m for m in await dashboard.models() if m.model_id == model_id), None)
     if model is None:
-        raise HTTPException(status_code=404, detail="model not found")
+        raise NotFoundError("model not found")
     await repo.promote(model.name, model.version)
     return {"name": model.name, "version": model.version, "promoted": True}

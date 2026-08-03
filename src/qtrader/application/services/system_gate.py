@@ -8,16 +8,16 @@ gate's history is fully explainable.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 
+from qtrader.config.logging import get_logger
 from qtrader.domain.entities import SystemLog
 from qtrader.domain.ports import PerformanceRepository, SystemLogRepository
 from qtrader.domain.value_objects import TradingMode
 
-logger = logging.getLogger("qtrader.system_gate")
+logger = get_logger("qtrader.system_gate")
 
 
 class GateStatus(StrEnum):
@@ -153,9 +153,20 @@ class SystemGate:
             SystemLog(level=level, component="system_gate", message=message, context=context)
         )
         if decision.approved:
-            logger.info(message)
+            logger.info(
+                "gate.decision",
+                strategy=decision.strategy,
+                mode=decision.mode.value,
+                status=decision.status.value,
+            )
         else:
-            logger.warning("%s: %s", message, "; ".join(decision.reasons) or "no data")
+            logger.warning(
+                "gate.decision",
+                strategy=decision.strategy,
+                mode=decision.mode.value,
+                status=decision.status.value,
+                reasons=decision.reasons or ["no data"],
+            )
 
 
 __all__ = ["GateDecision", "GateStatus", "GateThresholds", "SystemGate"]

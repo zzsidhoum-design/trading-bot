@@ -1,4 +1,4 @@
-"""Data Agent — reliable, clean market data in the DB (docs/02-agents.md §1).
+﻿"""Data Agent â€” reliable, clean market data in the DB (docs/02-agents.md Â§1).
 
 Ingests bars from a MarketDataProvider, cleans them, persists via the
 PriceRepository and publishes ``PriceUpdated`` / ``BackfillCompleted``. The
@@ -13,15 +13,11 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, ClassVar
 
-import structlog
-
 from qtrader.application.agents.base import AgentBase, AgentContext
 from qtrader.application.services.bar_cleaner import BarCleaner
 from qtrader.domain.events import BackfillCompleted, DomainEvent, PriceUpdated
 from qtrader.domain.ports import Cache, EventBus, MarketDataProvider, PriceRepository
 from qtrader.domain.value_objects import Interval, PriceBar
-
-logger = structlog.get_logger(__name__)
 
 
 def _to_str(value: Decimal) -> str:
@@ -59,11 +55,11 @@ class DataAgent(AgentBase):
         try:
             raw = await self._provider.fetch_bars(symbol, interval, start, end)
         except RuntimeError as exc:
-            logger.warning("data.backfill.provider_down", symbol=symbol, error=str(exc))
+            self._logger.warning("data.backfill.provider_down", symbol=symbol, error=str(exc))
             return 0
         report = self._cleaner.clean(raw, now=end, reject_stale=False)
         inserted = await self._prices.upsert_bars(report.kept)
-        logger.info(
+        self._logger.info(
             "data.backfill",
             symbol=symbol,
             interval=interval,
@@ -90,11 +86,11 @@ class DataAgent(AgentBase):
         try:
             quote = await self._provider.fetch_quote(symbol)
         except RuntimeError as exc:
-            logger.warning("data.refresh.no_quote", symbol=symbol, error=str(exc))
+            self._logger.warning("data.refresh.no_quote", symbol=symbol, error=str(exc))
             return None
         report = self._cleaner.clean([quote], reject_stale=True)
         if not report.kept:
-            logger.warning(
+            self._logger.warning(
                 "data.refresh.dropped",
                 symbol=symbol,
                 ts=quote.ts.isoformat(),

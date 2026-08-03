@@ -13,16 +13,12 @@ from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import ClassVar
 
-import structlog
-
 from qtrader.application.agents.base import AgentBase, AgentContext
 from qtrader.application.services.news_analysis import NewsAnalysis
 from qtrader.domain.entities import NewsItem, Signal
 from qtrader.domain.events import DomainEvent, NewsSignalGenerated, ScanCompleted
 from qtrader.domain.ports import EventBus, LLMClient, NewsProvider, NewsRepository, SignalRepository
 from qtrader.domain.value_objects import MarketImpact, SignalType
-
-logger = structlog.get_logger(__name__)
 
 SCORE_QUANT = Decimal("0.0001")
 
@@ -87,7 +83,7 @@ class NewsAgent(AgentBase):
         try:
             raw = await self._provider.fetch_news(symbol, since, self._limit)
         except RuntimeError as exc:
-            logger.warning("news.fetch_failed", symbol=symbol, error=str(exc))
+            self._logger.warning("news.fetch_failed", symbol=symbol, error=str(exc))
             return 0.0
         if not raw:
             return 0.0
@@ -121,7 +117,7 @@ class NewsAgent(AgentBase):
             },
         )
         await self._signals.save(signal)
-        logger.info("news.signal", symbol=symbol, signal_type=signal_type, score=score)
+        self._logger.info("news.signal", symbol=symbol, signal_type=signal_type, score=score)
         await self._bus.publish(
             NewsSignalGenerated(
                 symbol=symbol,
@@ -154,7 +150,7 @@ class NewsAgent(AgentBase):
                 system_prompt, user_prompt, NewsAnalysis
             )
         except Exception as exc:
-            logger.warning("news.llm_failed", url=item.url, error=str(exc))
+            self._logger.warning("news.llm_failed", url=item.url, error=str(exc))
             return None
         from dataclasses import replace
 
@@ -177,7 +173,7 @@ class NewsAgent(AgentBase):
                 if await self.analyze_symbol(symbol) != 0.0:
                     scored += 1
             except Exception:
-                logger.exception("news.analyze_failed", symbol=symbol)
+                self._logger.exception("news.analyze_failed", symbol=symbol)
         return scored
 
     async def on_event(self, event: DomainEvent) -> None:

@@ -18,6 +18,7 @@ from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskInputs
 from qtrader.config.settings import Settings
 from qtrader.domain.entities import Order, Stock
+from qtrader.domain.exceptions import NoPriceDataError, OrderRejectedError
 from qtrader.domain.ports import (
     IndicatorRepository,
     OrderRepository,
@@ -34,18 +35,6 @@ from qtrader.domain.value_objects import (
     TradeSide,
     TradingMode,
 )
-
-
-class OrderRejectedError(Exception):
-    """The risk gate refused the manual order."""
-
-    def __init__(self, reasons: list[str]) -> None:
-        self.reasons = reasons
-        super().__init__("; ".join(reasons))
-
-
-class NoPriceDataError(Exception):
-    """No market data is available for the requested symbol."""
 
 
 @dataclass(frozen=True, slots=True)

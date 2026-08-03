@@ -1,4 +1,4 @@
-"""Portfolio Agent — capital allocation & rebalancing (docs/02-agents.md §8).
+﻿"""Portfolio Agent â€” capital allocation & rebalancing (docs/02-agents.md Â§8).
 
 Consumes ``RiskApproved``, applies the pluggable :class:`AllocationPolicy` to
 turn the risk-sized plan into an executable quantity (never exceeding
@@ -11,14 +11,10 @@ from __future__ import annotations
 import uuid
 from typing import ClassVar
 
-import structlog
-
 from qtrader.application.agents.base import AgentBase, AgentContext
 from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.domain.events import AllocationProposal, DomainEvent, RiskApproved
 from qtrader.domain.ports import AllocationPolicy, EventBus, PositionRepository
-
-logger = structlog.get_logger(__name__)
 
 
 class PortfolioAgent(AgentBase):
@@ -48,7 +44,11 @@ class PortfolioAgent(AgentBase):
             event.plan, portfolio.current_cash, len(open_positions)
         )
         if quantity <= 0:
-            logger.warning("portfolio.skip", symbol=event.plan.symbol, reason="insufficient cash")
+            self._logger.warning(
+                "portfolio.skip",
+                symbol=event.plan.symbol,
+                reason="insufficient cash",
+            )
             return None
 
         proposal = AllocationProposal(
@@ -66,7 +66,7 @@ class PortfolioAgent(AgentBase):
                 str(event.plan.take_profit) if event.plan.take_profit is not None else None
             ),
         )
-        logger.info(
+        self._logger.info(
             "portfolio.allocate",
             symbol=proposal.symbol,
             qty=proposal.quantity,
@@ -80,7 +80,9 @@ class PortfolioAgent(AgentBase):
             try:
                 await self.allocate(event)
             except Exception:
-                logger.exception("portfolio.allocate_failed", symbol=event.plan.symbol)
+                self._logger.exception("portfolio.allocate_failed", symbol=event.plan.symbol)
 
     async def run(self, ctx: AgentContext) -> None:
-        logger.warning("portfolio.run_standalone", detail="Portfolio agent is event-driven only")
+        self._logger.warning(
+            "portfolio.run_standalone", detail="Portfolio agent is event-driven only"
+        )

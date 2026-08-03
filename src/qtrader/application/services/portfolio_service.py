@@ -50,3 +50,15 @@ class PortfolioService:
         assert portfolio.portfolio_id is not None
         self._portfolio_id = portfolio.portfolio_id
         return cast(Portfolio, portfolio)
+
+    def bind(self, repo: PortfolioRepository) -> PortfolioService:
+        """Copy of this service reading through ``repo`` (a UoW session)."""
+        clone = PortfolioService(
+            repo,
+            name=self._name,
+            initial_capital=self._initial_capital,
+            mode=self._mode,
+            default_id=self._default_id,
+        )
+        clone._portfolio_id = self._portfolio_id
+        return clone

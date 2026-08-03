@@ -10,11 +10,15 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import cast
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from qtrader.config.container import get_container
+from qtrader.config.container import get_container, shutdown_container
+from qtrader.config.logging import LoggingMiddleware
+from qtrader.domain.exceptions import QtraderError
 from qtrader.interfaces.api.routers import (
     agents,
     backtest,
@@ -31,9 +35,17 @@ _DASHBOARD_DIR = Path(__file__).resolve().parents[1] / "dashboard"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    container = get_container()
+    get_container()
     yield
-    await container.aclose()
+    await shutdown_container()
+
+
+def _error_response(request: Request, exc: Exception) -> JSONResponse:
+    error = cast(QtraderError, exc)
+    return JSONResponse(
+        status_code=error.http_status,
+        content={"error": error.code, "detail": error.message},
+    )
 
 
 def create_app() -> FastAPI:
@@ -44,6 +56,8 @@ def create_app() -> FastAPI:
         openapi_url="/api/v1/openapi.json",
         docs_url="/docs",
     )
+    app.add_middleware(LoggingMiddleware)
+    app.add_exception_handler(QtraderError, _error_response)
     app.include_router(system.router)
     app.include_router(stocks.router)
     app.include_router(portfolio.router)

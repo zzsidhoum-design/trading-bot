@@ -33,18 +33,16 @@ from qtrader.infrastructure.database.models import (
     StockModel,
     TradeModel,
 )
+from qtrader.infrastructure.database.repositories.base import SessionBoundRepo
 
 
 def _utc(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
-class SQLAlchemyPositionRepository(PositionRepository):
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
-        self._session_factory = session_factory
-
+class SQLAlchemyPositionRepository(SessionBoundRepo, PositionRepository):
     async def open_positions(self, portfolio_id: int) -> list[Position]:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             stmt = (
                 select(PositionModel, StockModel.symbol)
                 .join(StockModel, PositionModel.stock_id == StockModel.id)
@@ -57,7 +55,7 @@ class SQLAlchemyPositionRepository(PositionRepository):
             return [self._to_domain(row, symbol) for row, symbol in rows]
 
     async def save(self, position: Position) -> Position:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             if position.position_id is not None:
                 row = await session.get(PositionModel, position.position_id)
                 if row is None:
@@ -77,7 +75,8 @@ class SQLAlchemyPositionRepository(PositionRepository):
                     closed_at=position.closed_at,
                 )
                 session.add(row)
-            await session.commit()
+            await session.flush()
+            await self._commit(session)
             return Position(
                 portfolio_id=row.portfolio_id,
                 stock_id=row.stock_id,
@@ -123,12 +122,9 @@ class SQLAlchemyPositionRepository(PositionRepository):
         )
 
 
-class SQLAlchemyOrderRepository(OrderRepository):
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
-        self._session_factory = session_factory
-
+class SQLAlchemyOrderRepository(SessionBoundRepo, OrderRepository):
     async def create(self, order: Order) -> Order:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             row = OrderModel(
                 idempotency_key=order.idempotency_key,
                 portfolio_id=order.portfolio_id,
@@ -151,12 +147,13 @@ class SQLAlchemyOrderRepository(OrderRepository):
                 created_at=order.created_at,
             )
             session.add(row)
-            await session.commit()
+            await session.flush()
+            await self._commit(session)
             return self._to_domain(row, order.symbol or "")
 
     async def save(self, order: Order) -> Order:
         assert order.order_id is not None
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             row = await session.get(OrderModel, order.order_id)
             if row is None:
                 raise ValueError(f"order {order.order_id} not found")
@@ -168,11 +165,11 @@ class SQLAlchemyOrderRepository(OrderRepository):
             row.stop_loss = order.stop_loss.amount if order.stop_loss is not None else None
             row.take_profit = order.take_profit.amount if order.take_profit is not None else None
             row.reason_json = order.reason
-            await session.commit()
+            await self._commit(session)
             return order
 
     async def get_by_idempotency_key(self, key: str) -> Order | None:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             stmt = (
                 select(OrderModel, StockModel.symbol)
                 .join(StockModel, OrderModel.stock_id == StockModel.id)
@@ -185,7 +182,7 @@ class SQLAlchemyOrderRepository(OrderRepository):
     async def list_by_portfolio(
         self, portfolio_id: int, status: Any | None = None, limit: int = 100
     ) -> list[Order]:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             stmt = (
                 select(OrderModel, StockModel.symbol)
                 .join(StockModel, OrderModel.stock_id == StockModel.id)
@@ -285,12 +282,9 @@ class SQLAlchemyRiskRepository(RiskRepository):
         )
 
 
-class SQLAlchemyTradeRepository(TradeRepository):
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
-        self._session_factory = session_factory
-
+class SQLAlchemyTradeRepository(SessionBoundRepo, TradeRepository):
     async def record(self, trade: Trade) -> Trade:
-        async with self._session_factory() as session:
+        async with self._session_scope() as session:
             row = TradeModel(
                 position_id=trade.position_id,
                 portfolio_id=trade.portfolio_id,
@@ -310,5 +304,6 @@ class SQLAlchemyTradeRepository(TradeRepository):
                 mode=trade.mode.value,
             )
             session.add(row)
-            await session.commit()
+            await session.flush()
+            await self._commit(session)
             return cast(Trade, replace(trade, trade_id=row.id))

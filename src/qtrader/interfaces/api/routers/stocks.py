@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from qtrader.domain.entities import Stock
+from qtrader.domain.exceptions import NoPriceDataError, NotFoundError, ValidationError
 from qtrader.domain.ports import (
     IndicatorRepository,
     NewsRepository,
@@ -76,7 +78,7 @@ async def latest_price(
 ) -> PriceBarOut:
     bar = await price_repo.latest(symbol.upper(), interval)
     if bar is None:
-        raise HTTPException(status_code=404, detail="no price data for symbol")
+        raise NoPriceDataError(f"no price data for symbol {symbol.upper()!r}")
     return _bar_out(bar)
 
 
@@ -109,7 +111,7 @@ async def create_stock(
 ) -> StockOut:
     symbol = body.symbol.strip().upper()
     if not symbol:
-        raise HTTPException(status_code=422, detail="symbol must not be empty")
+        raise ValidationError("symbol must not be empty")
     stock = Stock(
         symbol=symbol,
         exchange=body.exchange or "PAPER",
@@ -142,8 +144,8 @@ async def latest_indicators(
 ) -> IndicatorOut:
     snapshot = await indicator_repo.latest(symbol.upper(), interval)
     if snapshot is None:
-        raise HTTPException(status_code=404, detail="no indicator data for symbol")
-    values = {
+        raise NotFoundError(f"no indicator data for symbol {symbol.upper()!r}")
+    values: dict[str, Any] = {
         name: str(value)
         for name, value in snapshot.__dict__.items()
         if value is not None
