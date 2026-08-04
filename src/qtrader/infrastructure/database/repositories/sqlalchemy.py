@@ -267,7 +267,10 @@ class SQLAlchemyPriceRepository(PriceRepository):
     @staticmethod
     async def _stock_id(session: AsyncSession, symbol: str) -> int | None:
         row = await session.scalar(
-            select(StockModel.id).where(StockModel.symbol == symbol).limit(1)
+            select(StockModel.id)
+            .where(StockModel.symbol == symbol)
+            .order_by(StockModel.is_active.desc(), StockModel.id)
+            .limit(1)
         )
         return row
 

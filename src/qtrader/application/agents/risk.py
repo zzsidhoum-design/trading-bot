@@ -31,6 +31,7 @@ from qtrader.domain.ports import (
 from qtrader.domain.value_objects import (
     Interval,
     OrderPlan,
+    OrderStatus,
     OrderType,
     Percentage,
     TradeSide,
@@ -168,10 +169,14 @@ class RiskAgent(AgentBase):
 
     async def _current_price(self, symbol: str) -> Decimal | None:
         bar = await self._prices.latest(symbol, Interval.D1)
+        if bar is None:
+            bar = await self._prices.latest(symbol, Interval.M5)
         return bar.close if bar is not None else None
 
     async def _current_atr(self, symbol: str) -> Decimal | None:
         snapshot = await self._indicators.latest(symbol, Interval.D1)
+        if snapshot is None:
+            snapshot = await self._indicators.latest(symbol, Interval.M5)
         return snapshot.atr if snapshot is not None else None
 
     def _equity_and_exposure(
@@ -216,9 +221,15 @@ class RiskAgent(AgentBase):
             created = order.created_at
             if created.tzinfo is None:
                 created = created.replace(tzinfo=UTC)
-            if created.date() == now.date():
+            if (
+                created.date() == now.date()
+                and order.status in (OrderStatus.FILLED, OrderStatus.SUBMITTED)
+            ):
                 trades_today += 1
-            if order.symbol == symbol:
+            if order.symbol == symbol and order.status in (
+                OrderStatus.FILLED,
+                OrderStatus.SUBMITTED,
+            ):
                 elapsed = (now - created).total_seconds() / 60.0
                 remaining = self._calculator.policy.min_cooldown_minutes - elapsed
                 if remaining > cooldown:

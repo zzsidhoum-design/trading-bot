@@ -10,7 +10,14 @@ from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskPolicy
 from qtrader.domain.entities import Order
 from qtrader.domain.events import DecisionMade, RiskApproved, RiskRejected
-from qtrader.domain.value_objects import Decision, Money, OrderType, TradeSide, TradingMode
+from qtrader.domain.value_objects import (
+    Decision,
+    Money,
+    OrderStatus,
+    OrderType,
+    TradeSide,
+    TradingMode,
+)
 from tests.unit.fakes_phase5 import (
     FakeEventBus,
     FakeIndicatorRepository,
@@ -85,6 +92,7 @@ async def test_cooldown_rejects() -> None:
         mode=TradingMode.PAPER,
         idempotency_key="k-1",
         symbol="AAPL",
+        status=OrderStatus.SUBMITTED,
         created_at=datetime.now(UTC) - timedelta(minutes=1),
     )
     agent = _agent(bus=bus, orders=FakeOrderRepository([recent]))

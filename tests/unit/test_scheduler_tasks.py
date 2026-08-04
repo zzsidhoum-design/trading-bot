@@ -9,10 +9,11 @@ import structlog
 
 from qtrader.config.logging import configure_logging, get_logger
 from qtrader.config.settings import Settings
-from qtrader.domain.entities import AgentMetric
+from qtrader.domain.entities import AgentMetric, Stock
 from qtrader.domain.ports import AgentMetricRepository
 from qtrader.domain.value_objects import TradingMode
 from qtrader.infrastructure.schedulers.tasks import (
+    _ensure_watchlist_active,
     _on_job_end,
     _on_job_start,
     _record_agent_metric,
@@ -110,3 +111,59 @@ async def test_record_agent_metric_missing_repo_is_silent() -> None:
         metric_name="total_return",
         value=Decimal("0.05"),
     )
+
+
+class _RecordingStockRepo:
+    def __init__(self, existing: dict[str, bool] | None = None) -> None:
+        self.upserts: list[tuple[str, str, bool]] = []
+        self._existing = existing or {}
+
+    async def get_by_symbol(self, symbol: str, exchange: str | None = None):
+        if symbol in self._existing:
+            return Stock(
+                symbol=symbol,
+                exchange="XNAS" if self._existing[symbol] else "YAHOO",
+                is_active=self._existing[symbol],
+            )
+        return None
+
+    async def upsert(self, stock) -> Stock:
+        self.upserts.append((stock.symbol, stock.exchange, stock.is_active))
+        return stock
+
+
+class _SettingsContainer:
+    def __init__(self, symbols: list[str]) -> None:
+        self._watchlist = ",".join(symbols)
+        self._stocks = _RecordingStockRepo()
+
+    def resolve(self, service_type: type) -> object:
+        from qtrader.domain.ports import StockRepository
+
+        if service_type is StockRepository:
+            return self._stocks
+        if service_type is Settings:
+            return Settings(
+                _env_file=None,
+                watchlist=self._watchlist,
+                worker_shards=1,
+                worker_shard_id=0,
+            )
+        raise KeyError(service_type)
+
+    @property
+    def stocks(self) -> _RecordingStockRepo:
+        return self._stocks
+
+
+async def test_ensure_watchlist_active_upserts_watchlist_as_active() -> None:
+    container = _SettingsContainer(["AAPL", "MSFT"])
+    await _ensure_watchlist_active(container)
+    assert container.stocks.upserts == [("AAPL", "XNAS", True), ("MSFT", "XNAS", True)]
+
+
+async def test_ensure_watchlist_active_reuses_existing_inactive_row() -> None:
+    container = _SettingsContainer(["AAPL", "MSFT"])
+    container.stocks._existing = {"AAPL": False, "MSFT": True}
+    await _ensure_watchlist_active(container)
+    assert container.stocks.upserts == [("AAPL", "YAHOO", True)]

@@ -178,7 +178,10 @@ class SQLAlchemyPerformanceRepository(PerformanceRepository):
                     StrategyPerformanceModel.strategy == strategy,
                     StrategyPerformanceModel.mode == mode.value,
                 )
-                .order_by(StrategyPerformanceModel.period_end.desc())
+                .order_by(
+                    StrategyPerformanceModel.period_end.desc(),
+                    StrategyPerformanceModel.id.desc(),
+                )
                 .limit(1)
             )
             row = await session.scalar(stmt)

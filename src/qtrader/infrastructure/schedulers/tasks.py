@@ -44,6 +44,37 @@ async def _startup(ctx: dict[str, Any]) -> None:
     from qtrader.config.container import get_container
 
     ctx[CONTAINER_KEY] = get_container()
+    await _ensure_watchlist_active(ctx[CONTAINER_KEY])
+
+
+async def _ensure_watchlist_active(container: Any) -> None:
+    """Register every watchlist symbol in the DB as active.
+
+    Without this the scanner would find no tradable symbols: the scanner only
+    iterates ``list_active()``, and watchlist symbols created by tests or older
+    seeds can be left inactive. Runs at worker startup so the pipeline is
+    self-healing after a fresh database.
+    """
+    from qtrader.domain.entities import Stock
+    from qtrader.domain.ports import StockRepository
+
+    settings = container.resolve(Settings)
+    stocks = container.resolve(StockRepository)
+    for symbol in _owned(settings.watchlist_symbols):
+        existing = await stocks.get_by_symbol(symbol)
+        if existing is not None:
+            if existing.is_active:
+                continue
+            await stocks.upsert(
+                Stock(
+                    symbol=symbol,
+                    exchange=existing.exchange,
+                    name=existing.name or symbol,
+                    is_active=True,
+                )
+            )
+            continue
+        await stocks.upsert(Stock(symbol=symbol, exchange="XNAS", name=symbol, is_active=True))
 
 
 async def _shutdown(ctx: dict[str, Any]) -> None:
@@ -133,12 +164,22 @@ async def backfill(
     interval: str | None = None,
     days: int | None = None,
 ) -> str:
-    """Data Agent job: pull clean history for the watchlist (or one symbol)."""
+    """Data Agent job: pull clean history for the watchlist (or one symbol).
+
+    Fetches the configured intraday interval plus daily bars — the risk gate
+    and backtester size positions from daily ATR, so daily data must exist
+    for the pipeline to proceed past Risk.
+    """
     from qtrader.application.agents.data import DataAgent
+    from qtrader.application.services.indicators import IndicatorEngine
+    from qtrader.domain.ports import IndicatorRepository, PriceRepository
 
     container = _container(ctx)
     settings = container.resolve(Settings)
     agent = container.resolve(DataAgent)
+    engine = IndicatorEngine()
+    indicators = container.resolve(IndicatorRepository)
+    prices = container.resolve(PriceRepository)
     iv = Interval(interval) if interval else settings.scan_interval
     symbols = [symbol] if symbol else settings.watchlist_symbols
     symbols = _owned(symbols)
@@ -146,9 +187,15 @@ async def backfill(
     start = end - timedelta(days=days or settings.backfill_days)
     total = 0
     for sym in symbols:
-        inserted = await agent.backfill(sym, iv, start, end)
-        total += inserted
-    return f"backfilled {total} bars for {len(symbols)} symbols ({iv})"
+        total += await agent.backfill(sym, iv, start, end)
+        if iv is not Interval.D1:
+            total += await agent.backfill(sym, Interval.D1, start, end)
+        for snap_iv in {iv, Interval.D1}:
+            bars = await prices.history(sym, snap_iv, limit=400)
+            if len(bars) >= 15:
+                snapshot = engine.compute(bars, sym, snap_iv)
+                await indicators.save_snapshot(snapshot)
+    return f"backfilled {total} bars for {len(symbols)} symbols ({iv}+D1)"
 
 
 async def scan_cycle(ctx: dict[str, Any]) -> str:
