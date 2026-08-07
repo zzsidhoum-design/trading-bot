@@ -1,6 +1,6 @@
 # Scientific Audit — Final Report
 
-Date: 2026-08-07. Baseline: `f7cff7b`. Evidence in `docs/audit/01..03`.
+Date: 2026-08-07. Baseline: `f7cff7b`. Evidence in `docs/audit/01..05`.
 Method: all numbers recomputed against the persisted DB, the walk-forward
 experiments, and the live pipeline state. No parameter changes were made to the
 frozen baseline; nothing new was persisted (the gate denied every candidate).
@@ -74,11 +74,11 @@ numbers cannot be treated as evidence of predictive skill.
 | 5 benchmarks | B&H +12.8% / SMA200 +3.0% vs strategy −5.9% over same window (see 03) |
 | 6 breakeven/gate | 39.33% floor = breakeven+6pp; realized payoff 1.83:1 makes margin thinner |
 | 7 regimes | market +0.65 Sharpe over OOS; strategy lost in a rising market |
-| 8 metric integrity | win_rate/PF/return use different bases; PF 1.008 vs return +25% divergence |
+| 8 metric integrity | win_rate/PF/return use different bases; PF 1.008 vs return +25% divergence; fold3 reproduced: reported PF 0.741 vs dollar PF 1.329 (see 05) |
 | 9 backtest vs live | different decision paths; historical results don't test the live ensemble |
 | 10 model review | registry placeholder; trainer path unreachable by prediction agent |
 | 12-13 experiments | calibrated & uncalibrated variants both DENIED (see 03) |
-| 14-15 execution | fills next-open, 2:1 bracket, 1% risk; commission 1bp/slip 5bp; no trade audit trail |
+| 14-15 execution | fills next-open, 2:1 bracket, 1% risk; commission 1bp/slip 5bp; no trade audit trail; **risk limits partially inert** (see 05) |
 | 16-17 win-rate/process | 40% win ⇒ negative return shown; experiments stopped, nothing persisted |
 
 ## Recommended repairs (for a future remediation phase, not applied here)
@@ -97,6 +97,10 @@ numbers cannot be treated as evidence of predictive skill.
    gate (payoff-ratio aware, not fixed 2:1).
 7. Enable `is_active` consistency and real fundamental/news feeds, or zero out
    the corresponding ensemble weights.
+8. Align position sizing with the actual bracket (ATR×1.5 sizing vs fixed
+   3%/6% stop disagree; realized per-trade risk ≠ 1%; one position reached 43%
+   of equity) and re-enable exposure/sector/daily-loss/trade-count limits that
+   are hardcoded inert in the backtest (see 05).
 
 ## Open items (Phase 20 backlog)
 
