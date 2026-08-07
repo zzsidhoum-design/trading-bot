@@ -22,12 +22,15 @@ from qtrader.domain.value_objects import Interval, PriceBar
 FEATURE_NAMES: tuple[str, ...] = (
     "ret_1",
     "ret_5",
+    "ret_10",
     "ret_20",
-    "momentum_20",
+    "ret_60",
     "vol_20",
     "atr_pct",
     "volume_ratio",
     "range_ratio",
+    "pos_in_range_20",
+    "up_ratio_20",
 )
 
 
@@ -44,10 +47,22 @@ def price_features_from_bars(bars: list[PriceBar]) -> dict[str, float]:
 
     ret_1 = _pct(closes[-1], closes[-2])
     ret_5 = _pct(closes[-1], closes[-6]) if len(closes) >= 6 else _pct(closes[-1], closes[0])
+    ret_10 = _pct(closes[-1], closes[-11]) if len(closes) >= 11 else _pct(closes[-1], closes[0])
     ret_20 = _pct(closes[-1], closes[-21]) if len(closes) >= 21 else _pct(closes[-1], closes[0])
+    ret_60 = _pct(closes[-1], closes[-61]) if len(closes) >= 61 else _pct(closes[-1], closes[0])
 
     returns = [_pct(closes[i], closes[i - 1]) for i in range(1, len(closes))]
     vol_20 = statistics.pstdev(returns) if len(returns) > 1 else 0.0
+
+    recent = bars[-20:] if len(bars) >= 20 else bars
+    lo = min(float(b.low) for b in recent)
+    hi = max(float(b.high) for b in recent)
+    span = hi - lo
+    pos_in_range_20 = (last - lo) / span if span > 1e-12 else 0.5
+
+    recent_closes = closes[-20:] if len(closes) >= 21 else closes
+    diffs = [recent_closes[i] - recent_closes[i - 1] for i in range(1, len(recent_closes))]
+    up_ratio_20 = sum(1 for d in diffs if d > 0) / len(diffs) if diffs else 0.0
 
     trs: list[float] = []
     for i in range(1, len(bars)):
@@ -70,12 +85,15 @@ def price_features_from_bars(bars: list[PriceBar]) -> dict[str, float]:
     return {
         "ret_1": round(ret_1, 6),
         "ret_5": round(ret_5, 6),
+        "ret_10": round(ret_10, 6),
         "ret_20": round(ret_20, 6),
-        "momentum_20": round(ret_20, 6),
+        "ret_60": round(ret_60, 6),
         "vol_20": round(vol_20, 6),
         "atr_pct": round(atr_pct, 6),
         "volume_ratio": round(volume_ratio, 6),
         "range_ratio": round(range_ratio, 6),
+        "pos_in_range_20": round(pos_in_range_20, 6),
+        "up_ratio_20": round(up_ratio_20, 6),
     }
 
 

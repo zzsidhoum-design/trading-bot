@@ -39,6 +39,7 @@ from qtrader.application.services.model_trainer import ModelTrainer
 from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskPolicy
 from qtrader.application.services.system_gate import GateThresholds, SystemGate
+from qtrader.application.services.walk_forward import WalkForwardValidator
 from qtrader.application.use_cases.manual_order import ManualOrder
 from qtrader.config.logging import configure_logging
 from qtrader.config.settings import Settings
@@ -85,7 +86,7 @@ from qtrader.domain.ports import (
 from qtrader.domain.value_objects import Money, TradingMode
 from qtrader.infrastructure.brokers import AlpacaBroker, PaperBroker
 from qtrader.infrastructure.cache import RedisCache, RedisLock
-from qtrader.infrastructure.data_providers.fundamental import StubFundamentalProvider
+from qtrader.infrastructure.data_providers.fundamental import EdgarFundamentalProvider
 from qtrader.infrastructure.data_providers.yahoo import YahooFinanceProvider
 from qtrader.infrastructure.database.repositories import (
     SQLAlchemyBacktestRepository,
@@ -194,7 +195,14 @@ class Container:
             instance=SQLAlchemyUnitOfWorkFactory(session_factory),
         )
 
-        c.register(FundamentalProvider, instance=StubFundamentalProvider())
+        self._fundamental_provider = self._adapt(
+            FundamentalProvider,
+            lambda: EdgarFundamentalProvider(
+                prices=lambda: c.resolve(MarketDataProvider),
+                user_agent="qtrader/0.1 (research@example.com)",
+            ),
+        )
+        c.register(FundamentalProvider, instance=self._fundamental_provider)
 
         llm: LLMClient
         if self._settings.openai_api_key:
@@ -372,6 +380,21 @@ class Container:
             logs=c.resolve(SystemLogRepository),
         )
         c.register(BacktestRunner, instance=backtest_runner)
+
+        walk_forward_validator = WalkForwardValidator(
+            prices=c.resolve(PriceRepository),
+            performance=c.resolve(PerformanceRepository),
+            risk_calculator=risk_calculator,
+            indicator_engine=IndicatorEngine(),
+            logs=c.resolve(SystemLogRepository),
+            min_train_samples=self._settings.walk_forward_min_train_samples,
+            folds=self._settings.walk_forward_folds,
+            lookback_bars=self._settings.walk_forward_lookback_bars,
+            horizon_bars=self._settings.walk_forward_horizon_bars,
+            prob_buy=self._settings.walk_forward_prob_buy,
+            prob_sell=self._settings.walk_forward_prob_sell,
+        )
+        c.register(WalkForwardValidator, instance=walk_forward_validator)
 
         c.register(
             DashboardService,

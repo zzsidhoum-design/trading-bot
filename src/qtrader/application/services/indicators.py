@@ -261,8 +261,34 @@ class IndicatorEngine:
         if df.empty:
             raise ValueError(f"no bars to compute indicators for {symbol}")
         combined = pd.concat([ind.compute(df) for ind in self.indicators], axis=1)
-        row = combined.iloc[-1]
-        latest = bars[-1]
+        return self._snapshot(combined.iloc[-1], bars[-1], symbol, interval)
+
+    def compute_series(
+        self, bars: list[PriceBar], symbol: str, interval: Interval
+    ) -> list[IndicatorSnapshot]:
+        """Vectorized snapshot per bar, identical to ``compute`` at each index.
+
+        Every indicator is an online (cumulative) function, so the value at row
+        ``i`` over the full series equals the value ``compute`` would return for
+        the prefix ``bars[:i+1]``. Callers can therefore precompute once per
+        symbol instead of re-running the whole frame for every bar. The two
+        exceptions are ``volume_profile`` (only the final row is populated) and
+        ``ichimoku_chikou`` (forward-looking ``shift(-26)``); neither is read by
+        the backtest signal path.
+        """
+        df = frame_from_bars(bars)
+        if df.empty:
+            return []
+        combined = pd.concat([ind.compute(df) for ind in self.indicators], axis=1)
+        return [
+            self._snapshot(combined.iloc[idx], bars[idx], symbol, interval)
+            for idx in range(len(bars))
+        ]
+
+    @staticmethod
+    def _snapshot(
+        row: Any, latest: PriceBar, symbol: str, interval: Interval
+    ) -> IndicatorSnapshot:
         profile = row.get("volume_profile")
         return IndicatorSnapshot(
             symbol=symbol,

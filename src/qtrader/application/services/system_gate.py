@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 
+from qtrader.application.services.walk_forward import STRATEGY_LABEL
 from qtrader.config.logging import get_logger
 from qtrader.domain.entities import SystemLog
 from qtrader.domain.ports import PerformanceRepository, SystemLogRepository
@@ -28,14 +29,35 @@ class GateStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class GateThresholds:
-    """Minimum bar a backtest must clear before graduating to paper trading."""
+    """Minimum bar a backtest must clear before graduating to paper trading.
+
+    ``min_win_rate`` defaults to ``None`` which makes the win-rate floor
+    reward/risk-aware: breakeven win rate for a bracket with a ``stop_loss_pct``
+    stop and ``take_profit_pct`` target is ``stop/(stop + target)``, and the
+    gate demands that breakeven plus ``win_rate_margin``. A fixed 50% floor is
+    structurally unreachable for a 2:1 bracket, so this is the meaningful bar.
+    """
 
     min_trades: int = 30
-    min_win_rate: float = 0.50
+    min_win_rate: float | None = None
     min_profit_factor: float = 1.2
     min_sharpe: float = 1.0
     max_drawdown: float = 0.25
     min_total_return: float = 0.0
+    stop_loss_pct: float = 0.03
+    take_profit_pct: float = 0.06
+    win_rate_margin: float = 0.06
+
+    @property
+    def breakeven_win_rate(self) -> float:
+        denom = self.stop_loss_pct + self.take_profit_pct
+        return self.stop_loss_pct / denom if denom else 0.0
+
+    @property
+    def effective_min_win_rate(self) -> float:
+        if self.min_win_rate is not None:
+            return self.min_win_rate
+        return min(0.95, self.breakeven_win_rate + self.win_rate_margin)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,10 +80,12 @@ class SystemGate:
         thresholds: GateThresholds,
         performance: PerformanceRepository,
         logs: SystemLogRepository,
+        oos_strategy: str = STRATEGY_LABEL,
     ) -> None:
         self._thresholds = thresholds
         self._performance = performance
         self._logs = logs
+        self._oos_strategy = oos_strategy
 
     @property
     def thresholds(self) -> GateThresholds:
@@ -72,7 +96,15 @@ class SystemGate:
         if mode is TradingMode.BACKTEST:
             decision = GateDecision(strategy, mode, GateStatus.GRADUATED, True, [])
         else:
-            summary = await self._performance.latest_for_strategy(strategy, TradingMode.BACKTEST)
+            # The walk-forward OOS summary is the source of truth; fall back to
+            # the in-sample backtest only while no out-of-sample run exists yet.
+            summary = await self._performance.latest_for_strategy(
+                self._oos_strategy, TradingMode.BACKTEST
+            )
+            if summary is None:
+                summary = await self._performance.latest_for_strategy(
+                    strategy, TradingMode.BACKTEST
+                )
             reasons: list[str] = []
             if summary is None:
                 reasons.append("no backtest results for strategy")
@@ -86,10 +118,11 @@ class SystemGate:
                     )
                 if (
                     summary.win_rate is not None
-                    and float(summary.win_rate) < self._thresholds.min_win_rate
+                    and float(summary.win_rate) < self._thresholds.effective_min_win_rate
                 ):
                     reasons.append(
-                        f"win rate {summary.win_rate:.2%} < min {self._thresholds.min_win_rate:.0%}"
+                        f"win rate {summary.win_rate:.2%} < min "
+                        f"{self._thresholds.effective_min_win_rate:.0%}"
                     )
                 if (
                     summary.profit_factor is not None

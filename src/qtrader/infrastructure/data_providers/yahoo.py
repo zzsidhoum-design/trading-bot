@@ -19,6 +19,7 @@ from qtrader.domain.value_objects import Interval, PriceBar
 from qtrader.infrastructure.resilience import (
     CircuitBreaker,
     CircuitOpenError,
+    TokenBucket,
     retry_async,
 )
 
@@ -87,11 +88,17 @@ class YahooFinanceProvider(MarketDataProvider):
         timeout_seconds: float = 15.0,
         client: httpx.AsyncClient | None = None,
         circuit: CircuitBreaker | None = None,
+        requests_per_second: float = 2.0,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = httpx.Timeout(timeout_seconds)
         self._client = client
         self._circuit = circuit or CircuitBreaker(name="yahoo")
+        self._limiter = TokenBucket(
+            capacity=requests_per_second * 2,
+            refill_rate_per_second=requests_per_second,
+            name="yahoo_http",
+        )
 
     def _transport(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -106,9 +113,17 @@ class YahooFinanceProvider(MarketDataProvider):
     async def _request_chart(
         self, symbol: str, params: dict[str, Any]
     ) -> httpx.Response:
+        await self._limiter.wait()
         response = await self._transport().get(
             f"/v8/finance/chart/{symbol}", params=params
         )
+        if response.status_code == 429:
+            retry_after = response.headers.get("Retry-After", "unknown")
+            raise httpx.HTTPStatusError(
+                f"yahoo chart rate limited (429, retry-after={retry_after}s)",
+                request=response.request,
+                response=response,
+            )
         response.raise_for_status()
         return response
 

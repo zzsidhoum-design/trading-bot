@@ -322,6 +322,45 @@ async def backtest_cycle(ctx: dict[str, Any]) -> str:
     )
 
 
+async def walk_forward_cycle(ctx: dict[str, Any]) -> str:
+    """Phase 6: refit on past folds only, validate OOS, update the gate."""
+    from datetime import date
+
+    from qtrader.application.services.walk_forward import STRATEGY_LABEL, WalkForwardValidator
+    from qtrader.domain.value_objects import Interval
+
+    container = _container(ctx)
+    settings = container.resolve(Settings)
+    if settings.backtest_universe:
+        symbols = [s.strip().upper() for s in settings.backtest_universe.split(",") if s.strip()]
+    else:
+        symbols = settings.watchlist_symbols
+    end = date.today()
+    start = end - timedelta(days=settings.backtest_lookback_days)
+    summary = await container.resolve(WalkForwardValidator).validate(
+        symbols=symbols,
+        start=start,
+        end=end,
+        initial_capital=Decimal(str(settings.portfolio_initial_capital)),
+        interval=Interval(settings.backtest_interval),
+        commission_bps=settings.backtest_commission_bps,
+        slippage_bps=settings.backtest_slippage_bps,
+    )
+    if summary is None:
+        return "walk-forward: skipped (insufficient history)"
+    await _record_agent_metric(
+        container,
+        agent_name="walk_forward",
+        metric_name="total_return",
+        value=summary.total_return or Decimal(0),
+    )
+    return (
+        f"walk-forward: {summary.trades_count} trades, "
+        f"return={summary.total_return} sharpe={summary.sharpe} "
+        f"oos={STRATEGY_LABEL}"
+    )
+
+
 class WorkerSettings:
     functions = [
         heartbeat,
@@ -330,6 +369,7 @@ class WorkerSettings:
         execute_cycle,
         train_cycle,
         backtest_cycle,
+        walk_forward_cycle,
     ]
 
     cron_jobs = [
@@ -338,6 +378,7 @@ class WorkerSettings:
         cron(execute_cycle, name="execute_cycle", minute={8, 23, 38, 53}),
         cron(train_cycle, name="train_cycle", hour={2}, minute=0),
         cron(backtest_cycle, name="backtest_cycle", hour={3}, minute=0),
+        cron(walk_forward_cycle, name="walk_forward_cycle", hour={3}, minute=5),
     ]
 
     redis_settings = RedisSettings.from_dsn(Settings().redis_url)

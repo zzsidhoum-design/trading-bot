@@ -61,6 +61,7 @@ def _runner(
     commission_bps: float = 1.0,
     slippage_bps: float = 0.0,
     logs: FakeSystemLogRepository | None = None,
+    model: object | None = None,
 ) -> tuple[BacktestRunner, FakeBacktestRepository, FakePerformanceRepository]:
     backtests = FakeBacktestRepository()
     performance = FakePerformanceRepository()
@@ -71,6 +72,7 @@ def _runner(
         risk_calculator=RiskCalculator(RiskPolicy(risk_per_trade_pct=0.01)),
         indicator_engine=IndicatorEngine(),
         logs=logs,
+        model=model,
     )
     return runner, backtests, performance
 
@@ -154,7 +156,7 @@ def test_intrabar_exit_prefers_stop_on_ambiguity() -> None:
         low="96",
         close="100",
     )
-    price, outcome = BacktestRunner._intrabar_exit(pos, both)
+    price, outcome = BacktestRunner._intrabar_exit(pos, both, BacktestParams())
     assert (price, outcome) == (Decimal("97"), "stop")
 
     hit_tp = bar(
@@ -165,11 +167,96 @@ def test_intrabar_exit_prefers_stop_on_ambiguity() -> None:
         low="99",
         close="100",
     )
-    price, outcome = BacktestRunner._intrabar_exit(pos, hit_tp)
+    price, outcome = BacktestRunner._intrabar_exit(pos, hit_tp, BacktestParams())
     assert (price, outcome) == (Decimal("106"), "take_profit")
 
     calm = bar("X", datetime(2026, 1, 4, tzinfo=UTC), open="100", high="102", low="99", close="100")
-    assert BacktestRunner._intrabar_exit(pos, calm) == (None, "")
+    assert BacktestRunner._intrabar_exit(pos, calm, BacktestParams()) == (None, "")
+
+
+def test_intrabar_exit_honors_trailing_stop() -> None:
+    pos = _OpenPosition(
+        symbol="X",
+        quantity=10,
+        entry_price=Decimal("100"),
+        stop_loss=Decimal("90"),
+        take_profit=Decimal("115"),
+        entry_ts=datetime(2026, 1, 1, tzinfo=UTC),
+        fees=Decimal(0),
+        peak=Decimal("105"),
+    )
+    params = BacktestParams(trailing_stop_pct=0.05)
+    dipped = bar(
+        "X", datetime(2026, 1, 2, tzinfo=UTC), open="102", high="106", low="99", close="100"
+    )
+    price, outcome = BacktestRunner._intrabar_exit(pos, dipped, params)
+    assert (price, outcome) == (Decimal("99.75"), "trailing")
+    calm = bar(
+        "X", datetime(2026, 1, 3, tzinfo=UTC), open="102", high="103", low="100.5", close="101"
+    )
+    assert BacktestRunner._intrabar_exit(pos, calm, params) == (None, "")
+
+
+def test_open_position_uses_parameterized_bracket() -> None:
+    runner = _runner({"X": _trend_bars("X")})[0]
+    from qtrader.application.services.backtest import BacktestFill
+
+    fill = BacktestFill(
+        symbol="X",
+        side=TradeSide.BUY,
+        quantity=10,
+        price=Decimal("100"),
+        commission=Decimal("0.1"),
+        ts=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    positions: dict[str, _OpenPosition] = {}
+    params = BacktestParams(stop_loss_pct=0.02, take_profit_pct=0.04)
+    cash = runner._open_position(fill, Decimal("100000"), positions, params, bar_index=5)
+    assert cash == Decimal("100000") - Decimal("1000") - Decimal("0.1")
+    assert positions["X"].stop_loss == Decimal("98")
+    assert positions["X"].take_profit == Decimal("104")
+    assert positions["X"].entry_bar_index == 5
+
+
+def test_max_hold_bars_exits_at_close() -> None:
+    symbol = "HOLD"
+    start = datetime(2026, 1, 1, 9, 30, tzinfo=UTC)
+    flat_bars = []
+    for i in range(40):
+        flat_bars.append(
+            bar(
+                symbol,
+                start + timedelta(days=i),
+                open="100",
+                high="100.5",
+                low="99.5",
+                close="100",
+                volume="1000000",
+            )
+        )
+    bars = {symbol: flat_bars}
+    model_outputs = {symbol: {flat_bars[33].ts: 0.9}}
+    from qtrader.domain.entities import BacktestRun
+    from qtrader.domain.value_objects import Money
+
+    runner = _runner(bars, model=object())[0]
+    run = BacktestRun(
+        name="hold",
+        universe=[symbol],
+        start=date(2026, 1, 1),
+        end=date(2026, 4, 30),
+        initial_capital=Money(Decimal("100000")),
+    )
+    result = runner._simulate(
+        run,
+        bars,
+        Decimal("100000"),
+        BacktestParams(commission_bps=1.0, max_hold_bars=5),
+        model_outputs=model_outputs,
+    )
+    timed = [t for t in result.trades if t.outcome == "time"]
+    assert timed, [t.outcome for t in result.trades]
+    assert timed[0].exit_time > timed[0].entry_time
 
 
 @pytest.mark.asyncio
@@ -279,3 +366,39 @@ async def test_run_failure_marks_run_failed_and_relogs() -> None:
 
     assert backtests.runs[-1].status == "failed"
     assert any(e.level == "ERROR" and e.message == "run failed" for e in logs.entries)
+
+
+def test_signal_engine_model_path_uses_series_cache_not_compute() -> None:
+    """The model branch must consume the precomputed series cache and never
+    call IndicatorEngine.compute per bar (that was the O(n^2) hot path)."""
+    from qtrader.application.services.backtest import _SignalEngine
+    from qtrader.application.services.indicators import IndicatorEngine, IndicatorSnapshot
+    from qtrader.application.services.prediction_model import LogisticModel
+    from qtrader.domain.value_objects import Decision, Interval
+
+    symbol = "CACHE"
+    bars = _trend_bars(symbol, days=80)
+
+    class _ExplodingEngine(IndicatorEngine):
+        def compute(self, bars, symbol, interval) -> IndicatorSnapshot:
+            raise AssertionError("model path must not recompute when a series cache exists")
+
+    real_engine = IndicatorEngine()
+    series = real_engine.compute_series(bars, symbol, Interval.D1)
+    last_snapshot = series[len(bars) - 1]
+    model = LogisticModel(feature_names=["ret_5"], coef=[0.0], intercept=5.0)
+    model_outputs = {
+        symbol: {
+            bars[i].ts: (0.55 if i % 2 == 1 else 0.5) for i in range(len(bars))
+        }
+    }
+    engine = _SignalEngine(
+        _ExplodingEngine(),
+        warmup_bars=10,
+        model=model,
+        model_outputs=model_outputs,
+        series={symbol: series},
+    )
+    decision, snapshot = engine.evaluate(symbol, bars, Interval.D1)
+    assert decision is not Decision.HOLD
+    assert snapshot is last_snapshot

@@ -2,13 +2,66 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
 from collections.abc import Iterable
+from pathlib import Path
+from typing import Any
 
 import pytest
 
 from qtrader.config.settings import Settings
 from qtrader.domain.events import DomainEvent
 from qtrader.domain.ports import EventRepository
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _integration_test_db_name() -> str:
+    return os.environ.get("QTRADER_TEST_DB_NAME", "qtrader_test")
+
+
+async def _database_exists(conn: Any, name: str) -> bool:
+    row = await conn.fetchrow(
+        "SELECT 1 FROM pg_database WHERE datname = $1", name
+    )
+    return row is not None
+
+
+def _create_test_database_if_missing() -> None:
+    """Create the dedicated integration-test database (no-op if present)."""
+    import asyncpg
+
+    settings = Settings(_env_file=None)
+    admin_url = (
+        f"postgresql://{settings.postgres_user}:{settings.postgres_password}"
+        f"@{settings.postgres_host}:{settings.postgres_port}/postgres"
+    )
+
+    async def _create() -> None:
+        conn = await asyncpg.connect(admin_url)
+        try:
+            if not await _database_exists(conn, _integration_test_db_name()):
+                await conn.execute(f'CREATE DATABASE "{_integration_test_db_name()}"')
+        finally:
+            await conn.close()
+
+    asyncio.run(_create())
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Redirect integration/e2e tests to an isolated database."""
+    if os.environ.get("QTRADER_RUN_INTEGRATION") != "1":
+        return
+    if os.environ.get("QTRADER_TEST_DB") == "0":
+        return
+    _create_test_database_if_missing()
+    os.environ["POSTGRES_DB"] = _integration_test_db_name()
+    from alembic import command
+    from alembic.config import Config as AlembicConfig
+
+    cfg = AlembicConfig(str(_REPO_ROOT / "alembic.ini"))
+    command.upgrade(cfg, "head")
 
 
 @pytest.fixture(scope="session")

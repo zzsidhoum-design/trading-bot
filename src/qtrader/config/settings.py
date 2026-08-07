@@ -148,11 +148,17 @@ class BacktestSettingsMixin(BaseSettings):
     backtest_warmup_bars: int = 30
     gate_strategy: str = "ensemble"
     gate_min_trades: int = 30
-    gate_min_win_rate: float = 0.50
+    gate_min_win_rate: float | None = None
     gate_min_profit_factor: float = 1.2
     gate_min_sharpe: float = 1.0
     gate_max_drawdown: float = 0.25
     gate_min_total_return: float = 0.0
+    walk_forward_min_train_samples: int = 50
+    walk_forward_folds: int = 5
+    walk_forward_lookback_bars: int = 60
+    walk_forward_horizon_bars: int = 12
+    walk_forward_prob_buy: float = 0.52
+    walk_forward_prob_sell: float = 0.48
 
 
 class WorkerSettingsMixin(BaseSettings):

@@ -56,8 +56,15 @@ def test_price_features_are_dimensionless_and_deterministic() -> None:
 
 def test_price_features_trending_up_has_positive_momentum() -> None:
     features = price_features_from_bars(_bars(step=0.2))
-    assert features["momentum_20"] > 0
+    assert features["ret_20"] > 0
+    assert features["ret_60"] > 0
     assert features["ret_5"] > 0
+
+
+def test_price_features_trending_up_sits_at_top_of_range() -> None:
+    features = price_features_from_bars(_bars(step=0.2))
+    assert features["pos_in_range_20"] > 0.85
+    assert features["up_ratio_20"] > 0.9
 
 
 def test_feature_hash_is_deterministic_and_sensitive() -> None:
@@ -66,13 +73,13 @@ def test_feature_hash_is_deterministic_and_sensitive() -> None:
     h2 = feature_hash(dict(f1))
     assert h1 == h2
     changed = dict(f1)
-    changed["momentum_20"] = changed["momentum_20"] + 0.001
+    changed["ret_20"] = changed["ret_20"] + 0.001
     assert feature_hash(changed) != h1
 
 
 def test_price_features_too_few_bars_returns_zeros() -> None:
     features = price_features_from_bars(_bars(count=1))
-    assert features["momentum_20"] == 0.0
+    assert features["ret_20"] == 0.0
 
 
 class FakePriceRepository(PriceRepository):

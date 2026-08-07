@@ -13,9 +13,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
+from typing import Any
 
+from qtrader.application.services.feature_store import price_features_from_bars
 from qtrader.application.services.indicators import IndicatorEngine, IndicatorSnapshot
 from qtrader.application.services.performance_metrics import PerformanceMetrics
+from qtrader.application.services.prediction_model import LogisticModel
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskInputs
 from qtrader.config.logging import get_logger
 from qtrader.domain.entities import BacktestRun, PerformanceSummary, SystemLog
@@ -102,6 +105,10 @@ class BacktestParams:
     slippage_bps: float = 0.0
     warmup_bars: int = 30
     max_open_positions: int = 10
+    stop_loss_pct: float = 0.03
+    take_profit_pct: float = 0.06
+    max_hold_bars: int = 0
+    trailing_stop_pct: float = 0.0
 
 
 @dataclass(slots=True)
@@ -113,6 +120,8 @@ class _OpenPosition:
     take_profit: Decimal
     entry_ts: datetime
     fees: Decimal
+    entry_bar_index: int = 0
+    peak: Decimal = Decimal(0)
 
 
 @dataclass(slots=True)
@@ -179,9 +188,25 @@ class _SignalEngine:
     actionable after ``warmup_bars`` so EMAs/ATR have converged.
     """
 
-    def __init__(self, indicator_engine: IndicatorEngine, warmup_bars: int = 30) -> None:
+    def __init__(
+        self,
+        indicator_engine: IndicatorEngine,
+        warmup_bars: int = 30,
+        model: LogisticModel | None = None,
+        model_prob_buy: float = 0.52,
+        model_prob_sell: float = 0.48,
+        model_lookback: int = 120,
+        model_outputs: dict[str, dict[Any, float]] | None = None,
+        series: dict[str, list[IndicatorSnapshot]] | None = None,
+    ) -> None:
         self._indicators = indicator_engine
         self._warmup = warmup_bars
+        self._model = model
+        self._prob_buy = model_prob_buy
+        self._prob_sell = model_prob_sell
+        self._model_lookback = model_lookback
+        self._model_outputs = model_outputs
+        self._series = series or {}
         self._prev_diff: dict[str, Decimal | None] = {}
 
     def evaluate(
@@ -190,7 +215,41 @@ class _SignalEngine:
         """Return (BUY | SELL | HOLD, snapshot) for the latest bar."""
         if len(bars) < max(self._warmup, 3):
             return Decision.HOLD, None
-        snapshot = self._indicators.compute(bars, symbol, interval)
+        model = self._model
+        if model is not None:
+            prob_up = self._prob_up(symbol, bars, model)
+            if prob_up < self._prob_buy and prob_up > self._prob_sell:
+                return Decision.HOLD, None
+            snapshot = self._snapshot(symbol, bars, interval)
+            if prob_up >= self._prob_buy:
+                return Decision.BUY, snapshot
+            return Decision.SELL, snapshot
+        snapshot = self._snapshot(symbol, bars, interval)
+        return self._momentum_decision(symbol, snapshot)
+
+    def _snapshot(
+        self, symbol: str, bars: list[PriceBar], interval: Interval
+    ) -> IndicatorSnapshot:
+        cached = self._series.get(symbol)
+        if cached:
+            idx = len(bars) - 1
+            if idx < len(cached):
+                return cached[idx]
+        return self._indicators.compute(bars, symbol, interval)
+
+    def _prob_up(
+        self, symbol: str, bars: list[PriceBar], model: LogisticModel
+    ) -> float:
+        if self._model_outputs is not None:
+            return self._model_outputs.get(symbol, {}).get(bars[-1].ts, 0.5)
+        feats = price_features_from_bars(bars[-self._model_lookback :])
+        return model.predict(feats).prob_up
+
+    def _momentum_decision(
+        self, symbol: str, snapshot: IndicatorSnapshot | None
+    ) -> tuple[Decision, IndicatorSnapshot | None]:
+        if snapshot is None:
+            return Decision.HOLD, None
         ema_fast, ema_slow = snapshot.ema_9, snapshot.ema_21
         if ema_fast is None or ema_slow is None:
             return Decision.HOLD, None
@@ -220,6 +279,9 @@ class BacktestRunner:
         risk_calculator: RiskCalculator,
         indicator_engine: IndicatorEngine | None = None,
         logs: SystemLogRepository | None = None,
+        model: LogisticModel | None = None,
+        model_prob_buy: float = 0.52,
+        model_prob_sell: float = 0.48,
     ) -> None:
         self._prices = prices
         self._backtests = backtests
@@ -227,6 +289,9 @@ class BacktestRunner:
         self._risk = risk_calculator
         self._indicator_engine = indicator_engine or IndicatorEngine()
         self._logs = logs
+        self._model = model
+        self._model_prob_buy = model_prob_buy
+        self._model_prob_sell = model_prob_sell
 
     async def run(
         self,
@@ -236,6 +301,7 @@ class BacktestRunner:
         end: date,
         initial_capital: Decimal,
         params: BacktestParams | None = None,
+        precompute_series: bool = False,
     ) -> BacktestResult:
         params = params or BacktestParams()
         run = await self._backtests.create(
@@ -254,7 +320,14 @@ class BacktestRunner:
         await self._log("INFO", "backtest", "run started", {"run_id": run.run_id, "name": name})
         try:
             bars_by_symbol = await self._load_bars(symbols, params.interval, start, end)
-            result = self._simulate(run, bars_by_symbol, initial_capital, params)
+            series = None
+            if precompute_series:
+                series = {
+                    symbol: self._indicator_engine.compute_series(bars, symbol, params.interval)
+                    for symbol, bars in bars_by_symbol.items()
+                    if bars
+                }
+            result = self._simulate(run, bars_by_symbol, initial_capital, params, series=series)
             await self._persist(result)
             await self._log(
                 "INFO",
@@ -293,11 +366,21 @@ class BacktestRunner:
         bars_by_symbol: dict[str, list[PriceBar]],
         initial_capital: Decimal,
         params: BacktestParams,
+        model_outputs: dict[str, dict[Any, float]] | None = None,
+        series: dict[str, list[IndicatorSnapshot]] | None = None,
     ) -> BacktestResult:
         broker = BacktestBroker(
             commission_bps=params.commission_bps, slippage_bps=params.slippage_bps
         )
-        signals = _SignalEngine(self._indicator_engine, warmup_bars=params.warmup_bars)
+        signals = _SignalEngine(
+            self._indicator_engine,
+            warmup_bars=params.warmup_bars,
+            model=self._model,
+            model_prob_buy=self._model_prob_buy,
+            model_prob_sell=self._model_prob_sell,
+            model_outputs=model_outputs,
+            series=series,
+        )
         cash = _dec(initial_capital)
         positions: dict[str, _OpenPosition] = {}
         cursors: dict[str, _Bars] = {}
@@ -313,13 +396,22 @@ class BacktestRunner:
 
                 for fill in broker.fills_at(bar):
                     if fill.side is TradeSide.BUY:
-                        cash = self._open_position(fill, cash, positions)
+                        cash = self._open_position(
+                            fill, cash, positions, params, bar_index=len(cursor.seen)
+                        )
                     else:
                         cash = self._close_position(fill, cash, positions, trades, outcome="signal")
 
                 pos = positions.get(bar.symbol)
                 if pos is not None and pos.entry_ts < bar.ts:
-                    exit_price, outcome = self._intrabar_exit(pos, bar)
+                    pos.peak = max(pos.peak, bar.high)
+                    exit_price, outcome = self._intrabar_exit(pos, bar, params)
+                    if (
+                        exit_price is None
+                        and params.max_hold_bars > 0
+                        and len(cursor.seen) - pos.entry_bar_index >= params.max_hold_bars
+                    ):
+                        exit_price, outcome = bar.close, "time"
                     if exit_price is not None:
                         fill = BacktestFill(
                             symbol=pos.symbol,
@@ -435,12 +527,14 @@ class BacktestRunner:
         fill: BacktestFill,
         cash: Decimal,
         positions: dict[str, _OpenPosition],
+        params: BacktestParams,
+        bar_index: int,
     ) -> Decimal:
         cost = fill.price * _dec(fill.quantity)
         if cost + fill.commission > cash:
             return cash
-        stop = fill.price * Decimal("0.97")
-        take = fill.price * Decimal("1.06")
+        stop = fill.price * (Decimal(1) - _dec(params.stop_loss_pct))
+        take = fill.price * (Decimal(1) + _dec(params.take_profit_pct))
         positions[fill.symbol] = _OpenPosition(
             symbol=fill.symbol,
             quantity=fill.quantity,
@@ -449,6 +543,8 @@ class BacktestRunner:
             take_profit=take,
             entry_ts=fill.ts,
             fees=fill.commission,
+            entry_bar_index=bar_index,
+            peak=fill.price,
         )
         return cash - cost - fill.commission
 
@@ -484,13 +580,19 @@ class BacktestRunner:
         return cash + proceeds
 
     @staticmethod
-    def _intrabar_exit(pos: _OpenPosition, bar: PriceBar) -> tuple[Decimal | None, str]:
+    def _intrabar_exit(
+        pos: _OpenPosition, bar: PriceBar, params: BacktestParams
+    ) -> tuple[Decimal | None, str]:
         if bar.low <= pos.stop_loss and bar.high >= pos.take_profit:
             return pos.stop_loss, "stop"
         if bar.low <= pos.stop_loss:
             return pos.stop_loss, "stop"
         if bar.high >= pos.take_profit:
             return pos.take_profit, "take_profit"
+        if params.trailing_stop_pct > 0 and pos.peak > 0:
+            trail_level = pos.peak * (Decimal(1) - _dec(params.trailing_stop_pct))
+            if bar.low <= trail_level:
+                return trail_level, "trailing"
         return None, ""
 
     @staticmethod

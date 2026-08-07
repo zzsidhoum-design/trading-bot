@@ -92,6 +92,46 @@ def test_engine_requires_bars() -> None:
         IndicatorEngine().compute([], "TEST", Interval.M5)
 
 
+def test_compute_series_matches_compute_for_online_indicators() -> None:
+    bars = _bars(count=260, drift=0.3)
+    engine = IndicatorEngine()
+    series = engine.compute_series(bars, "TEST", Interval.M5)
+    assert len(series) == len(bars)
+    # Every online (cumulative, non-forward-looking) field must match the
+    # per-bar compute exactly. volume_profile is last-row-only and
+    # ichimoku_chikou is forward-looking (shift(-26)), so both are excluded.
+    fields = (
+        "rsi",
+        "ema_9",
+        "ema_21",
+        "sma_50",
+        "sma_200",
+        "macd",
+        "macd_signal",
+        "macd_hist",
+        "atr",
+        "vwap",
+        "boll_upper",
+        "boll_middle",
+        "boll_lower",
+        "adx",
+        "stoch_k",
+        "stoch_d",
+        "ichimoku_tenkan",
+        "ichimoku_kijun",
+        "ichimoku_senkou_a",
+        "ichimoku_senkou_b",
+    )
+    for i in range(len(bars)):
+        snap = engine.compute(bars[: i + 1], "TEST", Interval.M5)
+        for f in fields:
+            assert getattr(snap, f) == getattr(series[i], f), (f, i)
+
+
+def test_compute_series_empty_returns_empty_list() -> None:
+    assert IndicatorEngine().compute_series([], "TEST", Interval.M5) == []
+
+
 def test_score_technical_uptrend() -> None:
     bars = _bars(count=260, drift=0.4)
     snap = IndicatorEngine().compute(bars, "TEST", Interval.M5)

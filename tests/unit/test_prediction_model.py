@@ -69,3 +69,33 @@ def test_logistic_monotone_in_positive_feature() -> None:
 def test_logistic_missing_hyperparams_returns_none() -> None:
     registered = RegisteredModel(name="momentum", version=1, hyperparams={})
     assert LogisticModel.from_registered(registered) is None
+
+
+def test_logistic_from_registered_roundtrips_calibration() -> None:
+    registered = RegisteredModel(
+        name="momentum",
+        version=2,
+        hyperparams={
+            "feature_names": ["ret_5"],
+            "coef": [1.0],
+            "intercept": 0.0,
+            "calib_a": 0.7,
+            "calib_b": -0.2,
+        },
+    )
+    model = LogisticModel.from_registered(registered)
+    assert model is not None
+    assert model._calib_a == pytest.approx(0.7)
+    assert model._calib_b == pytest.approx(-0.2)
+
+
+def test_logistic_predict_applies_calibration() -> None:
+    raw = LogisticModel(feature_names=["ret_5"], coef=[2.0], intercept=0.0)
+    calibrated = LogisticModel(
+        feature_names=["ret_5"], coef=[2.0], intercept=0.0, calib_a=0.5, calib_b=0.0
+    )
+    out_raw = raw.predict({"ret_5": 2.0})
+    out_cal = calibrated.predict({"ret_5": 2.0})
+    assert out_raw.prob_up > out_cal.prob_up > 0.5
+    assert 0.0 <= out_cal.prob_up <= 1.0
+    assert pytest.approx(out_cal.prob_up + out_cal.prob_down) == 1.0

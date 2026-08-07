@@ -114,3 +114,31 @@ async def test_can_trade_paper_after_graduation() -> None:
     await perf.upsert(_summary())
     gate = _gate(performance=perf)
     assert await gate.can_trade("ensemble", TradingMode.PAPER) is True
+
+
+def test_effective_min_win_rate_is_rr_aware() -> None:
+    thresholds = GateThresholds()
+    assert thresholds.breakeven_win_rate == pytest.approx(0.03 / 0.09)
+    assert thresholds.effective_min_win_rate == pytest.approx(0.03 / 0.09 + 0.06)
+    explicit = GateThresholds(min_win_rate=0.45)
+    assert explicit.effective_min_win_rate == 0.45
+
+
+@pytest.mark.asyncio
+async def test_paper_win_rate_clears_rr_aware_floor() -> None:
+    perf = FakePerformanceRepository()
+    await perf.upsert(_summary(win_rate=Decimal("0.40")))
+    gate = _gate(performance=perf)
+    decision = await gate.evaluate("ensemble", TradingMode.PAPER)
+    assert decision.approved is True
+
+
+@pytest.mark.asyncio
+async def test_paper_denied_below_rr_aware_floor() -> None:
+    perf = FakePerformanceRepository()
+    await perf.upsert(_summary(win_rate=Decimal("0.35")))
+    gate = _gate(performance=perf)
+    decision = await gate.evaluate("ensemble", TradingMode.PAPER)
+    assert decision.approved is False
+    assert any("win rate" in r for r in decision.reasons)
+    assert not any("profit factor" in r for r in decision.reasons)

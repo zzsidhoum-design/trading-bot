@@ -70,7 +70,11 @@ class HeuristicModel:
 
 
 class LogisticModel:
-    """Trained logistic regression reconstructed from stored hyperparams."""
+    """Trained logistic regression reconstructed from stored hyperparams.
+
+    ``calib_a``/``calib_b`` are Platt-scaling parameters fitted on a held-out
+    calibration set; ``predict`` applies them so ``prob_up`` is calibrated.
+    """
 
     def __init__(
         self,
@@ -79,12 +83,16 @@ class LogisticModel:
         intercept: float,
         mean: list[float] | None = None,
         std: list[float] | None = None,
+        calib_a: float = 1.0,
+        calib_b: float = 0.0,
     ) -> None:
         self._names = feature_names
         self._coef = coef
         self._intercept = intercept
         self._mean = mean or []
         self._std = std or []
+        self._calib_a = calib_a
+        self._calib_b = calib_b
 
     @classmethod
     def from_registered(cls, model: RegisteredModel) -> LogisticModel | None:
@@ -99,6 +107,8 @@ class LogisticModel:
             intercept=float(hp.get("intercept", 0.0)),
             mean=[float(m) for m in (hp.get("mean") or [])],
             std=[float(s) for s in (hp.get("std") or [])],
+            calib_a=float(hp.get("calib_a", 1.0)),
+            calib_b=float(hp.get("calib_b", 0.0)),
         )
 
     def predict(self, features: dict[str, float]) -> ModelOutput:
@@ -110,6 +120,7 @@ class LogisticModel:
                 value = (value - self._mean[i]) / denom
             vector.append(value)
         logit = self._intercept + sum(c * x for c, x in zip(self._coef, vector, strict=True))
+        logit = self._calib_a * logit + self._calib_b
         prob_up = _sigmoid(logit)
         vol = features.get("vol_20", 0.02) or 0.02
         expected_return = (2.0 * prob_up - 1.0) * vol * 0.5
