@@ -221,7 +221,16 @@ class SQLAlchemyPriceRepository(PriceRepository):
             stmt = (
                 pg_insert(PriceModel)
                 .values(payload)
-                .on_conflict_do_nothing(constraint="uq_prices_stock_interval_ts")
+                .on_conflict_do_update(
+                    constraint="uq_prices_stock_interval_ts",
+                    set_={
+                        "open": pg_insert(PriceModel).excluded.open,
+                        "high": pg_insert(PriceModel).excluded.high,
+                        "low": pg_insert(PriceModel).excluded.low,
+                        "close": pg_insert(PriceModel).excluded.close,
+                        "volume": pg_insert(PriceModel).excluded.volume,
+                    },
+                )
             )
             result = cast(CursorResult[Any], await session.execute(stmt))
             await session.commit()

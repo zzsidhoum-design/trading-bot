@@ -111,3 +111,50 @@ async def test_price_bars_upsert_and_history(session_factory: async_sessionmaker
     latest = await price_repo.latest("TSTB", Interval.M5)
     assert latest is not None
     assert latest.close == Decimal("11.8")
+
+
+@pytest.mark.asyncio
+async def test_price_bars_upsert_heals_existing_rows(
+    session_factory: async_sessionmaker,
+) -> None:
+    stock_repo = SQLAlchemyStockRepository(session_factory)
+    price_repo = SQLAlchemyPriceRepository(session_factory)
+
+    await stock_repo.upsert(Stock(symbol="TSTH", exchange="XNAS", name="Test Heal"))
+    async with session_factory() as session:
+        stock_id = await session.scalar(
+            select(StockModel.id).where(StockModel.symbol == "TSTH")
+        )
+        assert stock_id is not None
+        await session.execute(delete(PriceModel).where(PriceModel.stock_id == stock_id))
+        await session.commit()
+
+    ts = datetime(2026, 8, 2, 12, 0, tzinfo=UTC)
+    raw = PriceBar(
+        symbol="TSTH",
+        interval=Interval.M5,
+        ts=ts,
+        open=Decimal("100"),
+        high=Decimal("105"),
+        low=Decimal("99"),
+        close=Decimal("103"),
+        volume=Decimal("1000"),
+    )
+    assert await price_repo.upsert_bars([raw]) == 1
+
+    adjusted = PriceBar(
+        symbol="TSTH",
+        interval=Interval.M5,
+        ts=ts,
+        open=Decimal("50"),
+        high=Decimal("52.5"),
+        low=Decimal("49.5"),
+        close=Decimal("51.5"),
+        volume=Decimal("1000"),
+    )
+    # Second write with a different close must heal the existing row.
+    assert await price_repo.upsert_bars([adjusted]) == 1
+    history = await price_repo.history("TSTH", Interval.M5)
+    assert len(history) == 1
+    assert history[0].close == Decimal("51.5")
+    assert history[0].open == Decimal("50")

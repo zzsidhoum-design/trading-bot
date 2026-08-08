@@ -29,9 +29,19 @@ _logger = get_logger("qtrader.yahoo")
 
 
 def parse_chart_response(
-    payload: dict[str, Any], symbol: str, interval: Interval
+    payload: dict[str, Any],
+    symbol: str,
+    interval: Interval,
+    *,
+    auto_adjust: bool = True,
 ) -> list[PriceBar]:
     """Parse a Yahoo ``/v8/finance/chart`` response into sorted PriceBars.
+
+    When ``auto_adjust`` is true and the response carries ``adjclose``, OHLC is
+    restated for splits/dividends: each field is scaled by ``adjclose/close``
+    and the close itself is set to ``adjclose`` (the latest bar, where the
+    factor is 1, is left effectively unchanged). Intraday quotes and responses
+    without ``adjclose`` pass through with factor 1.
 
     Bars with any missing/None field or invalid OHLCV are skipped. Returns an
     empty list for errors, no data, or empty result sets.
@@ -51,6 +61,9 @@ def parse_chart_response(
     lows = quotes.get("low") or []
     closes = quotes.get("close") or []
     volumes = quotes.get("volume") or []
+    adjcloses: list[Any] = []
+    if auto_adjust:
+        adjcloses = ((indicators.get("adjclose") or [{}])[0]).get("adjclose") or []
 
     bars: list[PriceBar] = []
     for i, ts in enumerate(timestamps):
@@ -61,14 +74,30 @@ def parse_chart_response(
         if any(v is None for v in raw):
             continue
         try:
+            open_, high_, low_ = (
+                Decimal(str(raw[0])),
+                Decimal(str(raw[1])),
+                Decimal(str(raw[2])),
+            )
+            close = Decimal(str(raw[3]))
+            if i < len(adjcloses) and adjcloses[i] is not None:
+                adj = Decimal(str(adjcloses[i]))
+                if close > 0 and adj > 0:
+                    factor = adj / close
+                    open_, high_, low_ = (
+                        open_ * factor,
+                        high_ * factor,
+                        low_ * factor,
+                    )
+                    close = adj
             bar = PriceBar(
                 symbol=symbol,
                 interval=interval,
                 ts=datetime.fromtimestamp(int(ts), tz=UTC),
-                open=Decimal(str(raw[0])),
-                high=Decimal(str(raw[1])),
-                low=Decimal(str(raw[2])),
-                close=Decimal(str(raw[3])),
+                open=open_,
+                high=high_,
+                low=low_,
+                close=close,
                 volume=Decimal(str(raw[4])),
             )
         except (ValueError, TypeError, OverflowError):

@@ -3,8 +3,9 @@
 Date: 2026-08-08. Baseline: `a459406`. Workstream: P19 fix #2 (validation)
 implemented in `src/qtrader/application/services/calendar_walk_forward.py`
 (committed `3e8e4cd`), re-tested against the aligned validator. Fix #4 (exits)
-and fix #5 (costs) are exercised here as protocol choices; fix #1 (adjusted
-prices) is **not** yet implemented — every number below is on raw bars.
+and fix #5 (costs) are exercised here as protocol choices. Fix #1 (adjusted
+prices) is now implemented (adjclose merge in the Yahoo parser + heal-capable
+upsert) — every number below is on split/dividend-adjusted bars.
 
 ## 1. What changed vs the baseline protocol
 
@@ -37,85 +38,103 @@ trading. OOS bars across all folds ≈ 498k, spanning the **full** 2022-08..2026
 calendar range for every eligible symbol (the P10/P12 finding: the aligned
 validator compressed full-history names' OOS into 2022-2023 only).
 
-Model diagnostics (per-fold train, PIT): samples 70,404 → 368,783; fit accuracy
-0.577 → 0.536 (declines as the training window grows — consistent with weak,
-non-stationary signal); forward-12-bar base rate 0.474 → 0.535 (bull drift);
-Platt `calib_a` unstable (−0.417, 0.165, 0.485, 0.151).
+Model diagnostics (per-fold train, PIT): samples 70,404 → 368,783 (unchanged by
+fix #1 — adjusted prices preserve bar counts); fit accuracy 0.579 → 0.542;
+forward-12-bar base rate 0.480 → 0.542 (bull drift); Platt `calib_a` unstable
+(−0.407, 0.208, 0.526, 0.072).
 
-## 3. P19 model variants (fixed 0.60/0.40, calendar-PIT folds)
+## 3. P19 model variants (fixed 0.60/0.40, calendar-PIT folds, adjusted bars)
 
 ```
-V1 bracket 3/6, costs 1/5bp       trades= 284  win=38.03%  pf=1.195  sharpe= 0.530  dd=-13.63%  ret= +39.84%
-V2 bracket 3/6, costs 10/50bp     trades= 293  win=35.49%  pf=1.027  sharpe= 0.145  dd=-22.94%  ret=  +5.36%
-V3 no-target/time-12, 10/50bp     trades= 218  win=33.03%  pf=1.262  sharpe= 0.518  dd=-19.85%  ret= +45.19%
+V1 bracket 3/6, costs 1/5bp       trades= 261  win=37.55%  pf=1.159  sharpe= 0.395  dd=-18.78%  ret= +28.67%
+V2 bracket 3/6, costs 10/50bp     trades= 264  win=33.71%  pf=0.948  sharpe=-0.067  dd=-27.46%  ret=  -8.99%
+V3 no-target/time-12, 10/50bp     trades= 233  win=31.33%  pf=1.329  sharpe= 0.564  dd=-22.57%  ret= +58.37%
 ```
 
-## 4. Controls (same calendar folds, fixed threshold)
+## 4. Controls (same calendar folds, fixed threshold, adjusted bars)
 
 Always-long const 0.55 (dummy model path) and shuffled-label models:
 
 ```
-C1 AL bracket 3/6, 10/50bp        trades= 360  win=35.00%  pf=0.991  sharpe= 0.047  dd=-22.44%  ret=  -2.28%
-C2 shuffled labels, 10/50bp       trades= 135  win=37.78%  pf=1.096  sharpe= 0.205  dd=-13.21%  ret=  +8.00%
-AL no-target/time-12, 10/50bp     trades= 314  win=33.44%  pf=1.065  sharpe= 0.192  dd=-34.11%  ret=  +9.55%
-AL bracket 3/6, 1/5bp             trades= 293  win=37.88%  pf=1.188  sharpe= 0.527  dd=-13.17%  ret= +36.68%
+C1 AL bracket 3/6, 10/50bp        trades= 380  win=34.21%  pf=0.989  sharpe= 0.004  dd=-28.96%  ret=  -5.93%
+C2 shuffled labels, 10/50bp       trades= 128  win=29.69%  pf=0.773  sharpe=-0.390  dd=-30.98%  ret= -19.44%
+AL no-target/time-12, 10/50bp     trades= 328  win=32.62%  pf=0.929  sharpe=-0.167  dd=-39.36%  ret= -19.25%
+AL bracket 3/6, 1/5bp             trades= 296  win=36.82%  pf=1.104  sharpe= 0.326  dd=-20.81%  ret= +18.91%
 ```
 
 Momentum-v0 heuristic (the live fallback, model=None path):
 
 ```
-MOM no-target/time-12, 10/50bp    trades=1087  win=33.85%  pf=0.905  sharpe=-0.805  dd=-67.63%  ret= -56.98%
-MOM bracket 3/6, 10/50bp          trades=1163  win=32.07%  pf=0.782  sharpe=-1.122  dd=-86.52%  ret= -84.61%
-MOM bracket 3/6, 1/5bp            trades=1125  win=38.58%  pf=1.165  sharpe= 0.959  dd=-18.21%  ret=+202.75%
+MOM no-target/time-12, 10/50bp    trades=1057  win=32.92%  pf=0.932  sharpe=-0.423  dd=-49.85%  ret= -37.67%
+MOM bracket 3/6, 10/50bp          trades=1108  win=33.57%  pf=0.816  sharpe=-0.897  dd=-79.27%  ret= -75.26%
+MOM bracket 3/6, 1/5bp            trades=1143  win=37.88%  pf=1.133  sharpe= 0.841  dd=-20.57%  ret=+139.47%
 ```
 
 ## 5. Verdict (final-report acceptance bar: beat always-long AND shuffled at ≥10bp, on calendar-correct OOS)
 
 | variant | ret > always-long? | ret > shuffled? | pass? |
 |---|---|---|---|
-| V2 bracket 3/6 @ 10/50bp | yes (+5.36 vs −2.28) | **no** (+5.36 vs +8.00) | **NO** |
-| V3 no-target/time-12 @ 10/50bp | yes (+45.19 vs −2.28; matched-exit AL +9.55) | yes (+45.19 vs +8.00) | **YES** |
+| V2 bracket 3/6 @ 10/50bp | **no** (−8.99 vs −5.93) | yes (−8.99 vs −19.44) | **NO** |
+| V3 no-target/time-12 @ 10/50bp | yes (+58.37 vs −5.93; matched-exit AL −19.25) | yes (+58.37 vs −19.44) | **YES** |
 
-- **V2 (bracket) still fails**: at realistic costs the ML entry is not
-  distinguishable from the shuffled-label control (+5.36% vs +8.00%). The
-  "edge" is bracket-beta, exactly as the phase-5/7 ablation concluded.
-- **V3 (no-target/time-12) passes**: the fixed-threshold model with the exit
-  redesign beats the always-long control (+45.19 vs +9.55, matched exits) and
-  the shuffled control (+45.19 vs +8.00) at 10/50bp. This is the first variant
-  in the whole audit to clear the acceptance bar. The ML entry only shows edge
-  in combination with the redesigned exit.
-- **Momentum-v0 is dead at real costs**: +202.75% at 1/5bp collapses to
-  −84.61% at 10/50bp (1163 trades) — the live fallback is not viable and
+- **V2 (bracket) fails on clean data**: at realistic costs the ML entry is not
+  distinguishable from the always-long control (−8.99% vs −5.93%). On raw bars
+  it beat the always-long control only because split-date discontinuities were
+  present in the OOS window; once prices are adjusted the bracket variant shows
+  no edge over simply being long. Consistent with the phase-5/7 ablation.
+- **V3 (no-target/time-12) passes, and the pass is robust to the data fix**:
+  the fixed-threshold model with the exit redesign beats the always-long
+  control (+58.37 vs −19.25, matched exits; vs −5.93 bracket-exit control) and
+  the shuffled control (+58.37 vs −19.44) at 10/50bp on adjusted bars. The
+  clean-data re-run *improves* V3 (+45.19 → +58.37) while *harming* the
+  always-long control (+9.55 → −19.25): split artifacts were inflating the
+  buy-and-hold control more than the model. The ML entry edge only shows in
+  combination with the redesigned exit, and it is now measured on clean prices.
+- **Momentum-v0 stays dead at real costs**: +139.47% at 1/5bp collapses to
+  −75.26% at 10/50bp (1108 trades) — the live fallback is not viable and
   cannot be gated on.
 
 ## 6. Cross-checks and caveats
 
-- Internal consistency: C1 always-long bracket @10/50bp = −2.28% is reproduced
-  exactly by the matched-exit control run (two independent script executions).
-- V1 calendar-PIT @1/5bp bracket gives **+39.84%** vs the aligned baseline's
-  persisted **+9.23%** at the same costs and exits. The gap is almost entirely
-  the validation fix: OOS now genuinely spans 2022-08..2026-07 (bull years)
-  for full-history names instead of being compressed into 2022-2023. This
-  confirms the phase-10 fold-alignment finding and makes the old headline
-  number non-comparable to any fixed-baseline number.
+- Internal consistency: C1 always-long bracket @10/50bp = −5.93% is reproduced
+  exactly by the matched-exit control run (two independent script executions,
+  same as the raw-data run reproduced −2.28%).
+- V1 calendar-PIT @1/5bp bracket gives **+28.67%** on adjusted bars (raw:
+  +39.84%). The old aligned baseline persisted +9.23% on raw bars at the same
+  costs/exits — non-comparable, since that OOS was compressed into 2022-2023.
+- **Fix #1 materially changes the numbers**: always-long at 1/5bp drops
+  +36.68 → +18.91 and at 10/50bp drops −2.28 → −5.93; shuffled labels drop
+  +8.00 → −19.44; the model variants move in the same direction but V3
+  *improves* (+45.19 → +58.37). Raw data was inflating the controls (which ride
+  split discontinuities with no way to react) more than the model. The
+  acceptance-bar conclusion is unchanged and now sits on clean prices.
 - Cost model asymmetry: the engine charges commission+slippage on entries;
-  exit fills (stop/target/time/close) carry zero commission. Entry costs
-  dominate and the asymmetry is identical across variants/controls, so the A/B
-  is fair, but absolute numbers understate exit costs slightly.
+  exit fills (stop/target/time/close) carry zero commission. Identical across
+  variants/controls, so the A/B is fair, but absolute numbers understate exit
+  costs slightly.
+- Validator still rejects genuine crash bars: e.g. GL's −53% single-day crash
+  (2024-04-12, a real move, not a split) exceeds `max_single_bar_move_pct=0.5`
+  and is dropped on both raw and adjusted data. This is conservative and
+  symmetric across variants/controls.
 - V3 is a **single realization** at a deliberately-fixed (non-tuned) threshold:
-  it is immune to the threshold lottery by construction, but it is not a fresh
-  holdout — it is the honest, protocol-defined A/B. A regime-aware, additional
-  out-of-sample period (e.g. 2026-08 onward) is the next test before trusting
-  V3's magnitude.
-- **Fix #1 (adjusted OHLC) is not yet applied.** All numbers are on raw bars,
-  so split/dividend discontinuities can still inflate returns. V3's +45.19% is
-  provisional until adjusted prices land and the identical A/B is re-run.
+  immune to the threshold lottery by construction, but not a fresh holdout. A
+  regime-aware, additional out-of-sample period (e.g. 2026-08 onward) is the
+  next test before trusting V3's magnitude.
 
 ## 7. Status
 
-- Implemented & committed: fix #2 (calendar-PIT validator, `3e8e4cd`), unit
-  tests 7/7 green, ruff + mypy clean, full unit suite 333 passed.
+- Implemented & committed: fix #2 (calendar-PIT validator, `3e8e4cd`).
+- Implemented (fix #1, this commit): `parse_chart_response` merges `adjclose`
+  and scales OHLC by `adjclose/close` (fallback to raw when `adjclose` is
+  absent/null); `SQLAlchemyPriceRepository.upsert_bars` now heals existing rows
+  on conflict instead of ignoring them, so a re-backfill rewrites raw bars to
+  adjusted ones in place. Unit suite 337 passed (3 new parser adjustment
+  tests); integration suite green incl. new upsert-heal test; ruff + mypy
+  clean.
+- Applied: full D1 re-backfill 2021-08-01→2026-08-07 for all 502 S&P 500
+  symbols through the production `DataAgent` path (cleaner + validator); rows
+  624,820 → 625,348 (+528 split-date bars previously rejected on raw data).
 - Protocol-applied (no code change): fix #4 (no-target/time-12 exit) and
   fix #5 (10/50bp gate) — both exercised above.
-- Pending: fix #1 (adjusted prices + BarValidator on backfills), then re-run
-  this identical A/B to confirm V3 survives; re-test beyond 2026-07.
+- Re-test on adjusted bars confirms V3 passes the acceptance bar; momentum-v0
+  and the bracket variant fail. Next: out-of-sample test beyond 2026-07.
