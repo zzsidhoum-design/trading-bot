@@ -310,11 +310,17 @@ class PerformanceSummary:
     period_start: date
     period_end: date
     total_return: Decimal | None = None
+    cagr: Decimal | None = None
     sharpe: Decimal | None = None
     sortino: Decimal | None = None
     max_drawdown: Decimal | None = None
     win_rate: Decimal | None = None
     profit_factor: Decimal | None = None
+    expectancy: Decimal | None = None
+    avg_win: Decimal | None = None
+    avg_loss: Decimal | None = None
+    turnover: Decimal | None = None
+    total_costs: Decimal | None = None
     trades_count: int | None = None
     final_equity: Decimal | None = None
 

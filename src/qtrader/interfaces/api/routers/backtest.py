@@ -27,23 +27,11 @@ router = APIRouter(prefix="/api/v1/backtest", tags=["backtest"])
 
 
 def _run_out(run: BacktestRun) -> BacktestRunOut:
-    metrics = None
-    if run.metrics is not None:
-        m = run.metrics
-        metrics = PerformanceSummaryOut(
-            strategy=m.strategy,
-            mode=m.mode.value,
-            period_start=m.period_start,
-            period_end=m.period_end,
-            total_return=str(m.total_return) if m.total_return is not None else None,
-            sharpe=str(m.sharpe) if m.sharpe is not None else None,
-            sortino=str(m.sortino) if m.sortino is not None else None,
-            max_drawdown=str(m.max_drawdown) if m.max_drawdown is not None else None,
-            win_rate=str(m.win_rate) if m.win_rate is not None else None,
-            profit_factor=str(m.profit_factor) if m.profit_factor is not None else None,
-            trades_count=m.trades_count,
-            final_equity=str(m.final_equity) if m.final_equity is not None else None,
-        )
+    metrics = (
+        PerformanceSummaryOut.from_summary(run.metrics)
+        if run.metrics is not None
+        else None
+    )
     return BacktestRunOut(
         run_id=run.run_id,
         name=run.name,

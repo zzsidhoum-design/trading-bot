@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from qtrader.domain.entities import PerformanceSummary
 
 
 class HealthCheck(BaseModel):
@@ -238,13 +241,45 @@ class PerformanceSummaryOut(BaseModel):
     period_start: date
     period_end: date
     total_return: str | None = None
+    cagr: str | None = None
     sharpe: str | None = None
     sortino: str | None = None
     max_drawdown: str | None = None
     win_rate: str | None = None
     profit_factor: str | None = None
+    expectancy: str | None = None
+    avg_win: str | None = None
+    avg_loss: str | None = None
+    turnover: str | None = None
+    total_costs: str | None = None
     trades_count: int | None = None
     final_equity: str | None = None
+
+    @classmethod
+    def from_summary(cls, summary: PerformanceSummary) -> PerformanceSummaryOut:
+        def num(value: Decimal | None) -> str | None:
+            return str(value) if value is not None else None
+
+        return cls(
+            strategy=summary.strategy,
+            mode=summary.mode.value,
+            period_start=summary.period_start,
+            period_end=summary.period_end,
+            total_return=num(summary.total_return),
+            cagr=num(summary.cagr),
+            sharpe=num(summary.sharpe),
+            sortino=num(summary.sortino),
+            max_drawdown=num(summary.max_drawdown),
+            win_rate=num(summary.win_rate),
+            profit_factor=num(summary.profit_factor),
+            expectancy=num(summary.expectancy),
+            avg_win=num(summary.avg_win),
+            avg_loss=num(summary.avg_loss),
+            turnover=num(summary.turnover),
+            total_costs=num(summary.total_costs),
+            trades_count=summary.trades_count,
+            final_equity=num(summary.final_equity),
+        )
 
 
 class RegisteredModelOut(BaseModel):

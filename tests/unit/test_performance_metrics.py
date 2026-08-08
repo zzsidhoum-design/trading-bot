@@ -141,3 +141,82 @@ def test_loss_only_summary() -> None:
     )
     assert summary.total_return == Decimal("-0.2")
     assert summary.profit_factor == Decimal("0")  # no gross profit
+
+
+def test_zero_pnl_trade_is_not_a_win() -> None:
+    curve = _curve([("d1", "100"), ("d2", "101"), ("d3", "101"), ("d4", "102")])
+    summary = PerformanceMetrics.from_series(
+        strategy="test",
+        mode=TradingMode.BACKTEST,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 1, 4),
+        equity_curve=curve,
+        trade_pnl_pcts=[Decimal("0.01"), Decimal("0.00"), Decimal("-0.01")],
+    )
+    assert summary.win_rate == (Decimal("1") / Decimal("3")).quantize(Decimal("1e-6"))
+    assert summary.avg_win == Decimal("0.01")
+    assert summary.avg_loss == Decimal("-0.01")
+
+
+def test_expectancy_avg_win_avg_loss_dollar_weighted() -> None:
+    curve = _curve([("d1", "100"), ("d2", "101"), ("d3", "100"), ("d4", "102")])
+    summary = PerformanceMetrics.from_series(
+        strategy="test",
+        mode=TradingMode.BACKTEST,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 1, 4),
+        equity_curve=curve,
+        trade_pnl_pcts=[Decimal("0.10"), Decimal("-0.10")],
+        trade_pnl_amounts=[Decimal("10"), Decimal("-100")],
+    )
+    assert summary.avg_win == Decimal("10")
+    assert summary.avg_loss == Decimal("-100")
+    assert summary.expectancy == Decimal("-45")
+
+
+def test_cagr_compounds_over_period() -> None:
+    # 100 -> 121 over 2 periods with 252 annualization: cagr = (1.21)^126 - 1.
+    curve = _curve([("d1", "100"), ("d2", "110"), ("d3", "121")])
+    summary = PerformanceMetrics.from_series(
+        strategy="test",
+        mode=TradingMode.BACKTEST,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 1, 3),
+        equity_curve=curve,
+        trade_pnl_pcts=[],
+    )
+    assert summary.cagr is not None
+    assert summary.cagr > 0
+    expected = Decimal("1.21") ** (Decimal("252") / Decimal("2")) - Decimal("1")
+    ratio = summary.cagr / expected
+    assert abs(ratio - Decimal("1")) < Decimal("0.001")
+
+
+def test_turnover_and_total_costs() -> None:
+    curve = _curve([("d1", "100"), ("d2", "100"), ("d3", "100"), ("d4", "100")])
+    summary = PerformanceMetrics.from_series(
+        strategy="test",
+        mode=TradingMode.BACKTEST,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 1, 4),
+        equity_curve=curve,
+        trade_pnl_pcts=[Decimal("0.00"), Decimal("0.00")],
+        trade_notionals=[Decimal("100"), Decimal("100")],
+        trade_costs=[Decimal("0.5"), Decimal("0.5")],
+    )
+    assert summary.turnover == Decimal("2")
+    assert summary.total_costs == Decimal("1")
+
+
+def test_expectancy_formula_matches_ev() -> None:
+    # EV = p(win)*avg_win + p(loss)*avg_loss with signed avg_loss.
+    ev = PerformanceMetrics.expectancy_formula(
+        win_rate=Decimal("0.5"),
+        loss_rate=Decimal("0.4"),
+        avg_win=Decimal("0.10"),
+        avg_loss=Decimal("-0.05"),
+    )
+    assert ev == Decimal("0.05") - Decimal("0.02")
+    assert PerformanceMetrics.expectancy_formula(
+        win_rate=None, loss_rate=Decimal("0.4"), avg_win=Decimal("0.1"), avg_loss=Decimal("-0.05")
+    ) is None
