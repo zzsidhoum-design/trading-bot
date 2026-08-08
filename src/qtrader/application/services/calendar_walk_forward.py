@@ -196,13 +196,15 @@ class CalendarWalkForwardValidator:
         prices: PriceRepository,
         backtests: BacktestRepository,
         fold: CalendarFold,
-        model: LogisticModel,
+        model: LogisticModel | None,
         initial_capital: Decimal,
         *,
         interval: Interval = Interval.D1,
         commission_bps: float = 1.0,
         slippage_bps: float = 5.0,
         exit_cfg: dict[str, float] | None = None,
+        model_outputs: dict[str, dict[Any, float]] | None = None,
+        series: dict[str, list[Any]] | None = None,
     ) -> BacktestResult:
         runner = BacktestRunner(
             prices=prices,
@@ -244,12 +246,15 @@ class CalendarWalkForwardValidator:
         )
         # Bars outside the held-out calendar window get prob 0.5 -> always HOLD,
         # so they contribute feature history but never trade.
-        probs = self.precompute_probs(model, fold)
-        series = {
-            symbol: self._indicator_engine.compute_series(bars, symbol, interval)
-            for symbol, bars in fold.full.items()
-            if bars
-        }
+        if model_outputs is None and model is not None:
+            model_outputs = self.precompute_probs(model, fold)
+        probs = model_outputs
+        if series is None:
+            series = {
+                symbol: self._indicator_engine.compute_series(bars, symbol, interval)
+                for symbol, bars in fold.full.items()
+                if bars
+            }
         return runner._simulate(
             run, fold.full, initial_capital, params, model_outputs=probs, series=series
         )

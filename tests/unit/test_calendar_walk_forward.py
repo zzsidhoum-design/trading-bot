@@ -159,6 +159,25 @@ def test_full_pipeline_produces_aggregate_summary() -> None:
     assert summary.strategy == CALENDAR_STRATEGY_LABEL
 
 
+def test_simulate_fold_momentum_mode_without_model() -> None:
+    """model=None with no model_outputs drives the momentum heuristic, not
+    the calibrated-probability path — matching the live fallback baseline."""
+    start = date(2025, 1, 1)
+    end = date(2026, 12, 31)
+    bars = {"AAPL": _bars_from("AAPL", datetime(2024, 1, 1, tzinfo=UTC), 800, seed=1)}
+    validator = _validator(bars)
+    folds = validator.make_folds(bars, start, end, n_folds=4)
+    result = validator.simulate_fold(
+        prices=FakePriceRepository(bars),
+        backtests=FakeBacktestRepository(),
+        fold=folds[1],
+        model=None,
+        initial_capital=Decimal("100000"),
+    )
+    assert result.summary is not None
+    assert result.run.strategy == CALENDAR_STRATEGY_LABEL
+
+
 def test_chain_curve_compounds_across_folds() -> None:
     start = datetime(2026, 1, 1, tzinfo=UTC)
     fold1 = [
