@@ -53,6 +53,9 @@ class MarketDataSettingsMixin(BaseSettings):
     data_provider: str = "yahoo"
     backfill_days: int = 30
     quote_cache_ttl_seconds: int = 300
+    data_max_single_bar_move_pct: float = 0.5
+    data_reject_large_moves: bool = True
+    data_max_calendar_gap_days: int = 10
     scan_top_k: int = 20
     scan_lookback_bars: int = 60
     scan_momentum_lookback: int = 20

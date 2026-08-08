@@ -14,6 +14,7 @@ from typing import Any, ClassVar
 
 from qtrader.application.agents.base import AgentBase, AgentContext
 from qtrader.application.services.bar_cleaner import BarCleaner
+from qtrader.application.services.bar_validator import BarValidator
 from qtrader.domain.events import BackfillCompleted, DomainEvent, PriceUpdated
 from qtrader.domain.ports import Cache, EventBus, MarketDataProvider, PriceRepository
 from qtrader.domain.value_objects import Interval, PriceBar
@@ -32,6 +33,7 @@ class DataAgent(AgentBase):
         bus: EventBus,
         cleaner: BarCleaner,
         *,
+        validator: BarValidator | None = None,
         quote_cache_ttl_seconds: int = 300,
     ) -> None:
         self._provider = provider
@@ -39,33 +41,58 @@ class DataAgent(AgentBase):
         self._cache = cache
         self._bus = bus
         self._cleaner = cleaner
+        self._validator = validator
         self._quote_ttl = quote_cache_ttl_seconds
 
     async def backfill(
         self, symbol: str, interval: Interval, start: datetime, end: datetime
     ) -> int:
-        """Fetch + clean + persist a historical range; publish completion."""
+        """Fetch + clean + validate + persist a historical range; publish completion."""
         end = end.astimezone(UTC)
         start = start.astimezone(UTC)
         try:
             raw = await self._provider.fetch_bars(symbol, interval, start, end)
         except RuntimeError as exc:
-            self._logger.warning("data.backfill.provider_down", symbol=symbol, error=str(exc))
+            self._logger.error(
+                "data.backfill.provider_failed",
+                symbol=symbol,
+                interval=interval,
+                reason=str(exc),
+            )
+            return 0
+        if not raw:
+            self._logger.warning(
+                "data.backfill.empty_window", symbol=symbol, interval=interval
+            )
             return 0
         report = self._cleaner.clean(raw, now=end, reject_stale=False)
-        inserted = await self._prices.upsert_bars(report.kept)
+        kept = report.kept
+        rejected = 0
+        reasons: dict[str, int] = dict(report.reasons)
+        gaps: list[tuple[str, str, str, int]] = []
+        if self._validator is not None:
+            validation = self._validator.validate(kept)
+            kept = validation.kept
+            rejected = validation.rejected
+            for reason, count in validation.reasons.items():
+                reasons[reason] = reasons.get(reason, 0) + count
+            gaps = validation.gaps
+        inserted = await self._prices.upsert_bars(kept)
         self._logger.info(
             "data.backfill",
             symbol=symbol,
             interval=interval,
             fetched=len(raw),
             kept=len(report.kept),
+            validated=len(kept),
             inserted=inserted,
             dropped=report.dropped,
-            reasons=report.reasons,
+            rejected=rejected,
+            reasons=reasons,
+            gaps=gaps,
         )
-        if report.kept:
-            await self._cache_quote(report.kept[-1])
+        if kept:
+            await self._cache_quote(kept[-1])
             await self._bus.publish(
                 BackfillCompleted(
                     symbol=symbol,
@@ -77,14 +104,21 @@ class DataAgent(AgentBase):
         return inserted
 
     async def refresh(self, symbol: str) -> PriceBar | None:
-        """Fetch the latest quote, persist and publish ``PriceUpdated``."""
+        """Fetch the latest quote, validate, persist and publish ``PriceUpdated``."""
         try:
             quote = await self._provider.fetch_quote(symbol)
         except RuntimeError as exc:
             self._logger.warning("data.refresh.no_quote", symbol=symbol, error=str(exc))
             return None
+        if quote is None:
+            self._logger.warning("data.refresh.empty_quote", symbol=symbol)
+            return None
         report = self._cleaner.clean([quote], reject_stale=True)
-        if not report.kept:
+        bar = report.kept[0] if report.kept else None
+        if bar is not None and self._validator is not None:
+            validation = self._validator.validate([bar])
+            bar = validation.kept[0] if validation.kept else None
+        if bar is None:
             self._logger.warning(
                 "data.refresh.dropped",
                 symbol=symbol,
@@ -92,7 +126,6 @@ class DataAgent(AgentBase):
                 reasons=report.reasons,
             )
             return None
-        bar = report.kept[0]
         inserted = await self._prices.upsert_bars([bar])
         await self._cache_quote(bar)
         if inserted:

@@ -31,6 +31,7 @@ from qtrader.application.agents.technical import TechnicalAgent
 from qtrader.application.services.allocation_policy import EqualWeightAllocation
 from qtrader.application.services.backtest import BacktestRunner
 from qtrader.application.services.bar_cleaner import BarCleaner
+from qtrader.application.services.bar_validator import BarValidator
 from qtrader.application.services.dashboard_service import DashboardService
 from qtrader.application.services.decision_strategy import EnsembleDecisionStrategy
 from qtrader.application.services.feature_store import FeatureStore
@@ -216,6 +217,13 @@ class Container:
         cleaner = BarCleaner()
         c.register(BarCleaner, instance=cleaner)
 
+        validator = BarValidator(
+            max_single_bar_move_pct=self._settings.data_max_single_bar_move_pct,
+            reject_large_moves=self._settings.data_reject_large_moves,
+            max_calendar_gap_days=self._settings.data_max_calendar_gap_days,
+        )
+        c.register(BarValidator, instance=validator)
+
         provider = self._adapt(
             MarketDataProvider,
             lambda: YahooFinanceProvider(
@@ -236,6 +244,7 @@ class Container:
             cache=c.resolve(Cache),
             bus=bus,
             cleaner=cleaner,
+            validator=validator,
             quote_cache_ttl_seconds=self._settings.quote_cache_ttl_seconds,
         )
         c.register(DataAgent, instance=data_agent)
