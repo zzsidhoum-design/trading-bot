@@ -218,6 +218,163 @@ def test_open_position_uses_parameterized_bracket() -> None:
     assert positions["X"].entry_bar_index == 5
 
 
+def test_queue_buy_sizes_for_bracket_risk() -> None:
+    from qtrader.application.services.backtest import BacktestBroker, _Bars, _SimContext
+    from qtrader.domain.value_objects import Interval
+
+    bars = _trend_bars("X", days=40)
+    runner = _runner({"X": bars})[0]
+    broker = BacktestBroker()
+    entry_bar = bars[39]
+    snapshot = IndicatorEngine().compute(bars, "X", Interval.D1)
+    ctx = _SimContext(
+        sectors=None,
+        trades_today=0,
+        daily_pnl_pct=0.0,
+        cooldown_remaining_minutes=0.0,
+    )
+    runner._queue_buy(
+        broker,
+        entry_bar,
+        snapshot,
+        BacktestParams(stop_loss_pct=0.03),
+        Decimal("100000"),
+        {},
+        {"X": _Bars()},
+        ctx,
+    )
+    assert len(broker.pending) == 1
+    qty = broker.pending[0].quantity
+    expected = int((Decimal("100000") * Decimal("0.01")) / (entry_bar.close * Decimal("0.03")))
+    assert qty == expected  # ~1/3 of equity, so a stop hit loses ~1% of equity.
+
+
+def test_queue_buy_rejects_when_projected_exposure_over_limit() -> None:
+    from qtrader.application.services.backtest import (
+        BacktestBroker,
+        _Bars,
+        _OpenPosition,
+        _SimContext,
+    )
+    from qtrader.domain.value_objects import Interval
+
+    bars = _trend_bars("X", days=40)
+    runner = _runner({"X": bars})[0]
+    broker = BacktestBroker()
+    entry_bar = bars[39]
+    snapshot = IndicatorEngine().compute(bars, "X", Interval.D1)
+    pos = _OpenPosition(
+        symbol="Y",
+        quantity=700,
+        entry_price=Decimal("100"),
+        stop_loss=Decimal("97"),
+        take_profit=Decimal("106"),
+        entry_ts=entry_bar.ts,
+        fees=Decimal(0),
+    )
+    cursors = {"Y": _Bars()}
+    cursors["Y"].last_close = Decimal("100")
+    ctx = _SimContext(
+        sectors=None,
+        trades_today=0,
+        daily_pnl_pct=0.0,
+        cooldown_remaining_minutes=0.0,
+    )
+    runner._queue_buy(
+        broker,
+        entry_bar,
+        snapshot,
+        BacktestParams(),
+        Decimal("30000"),
+        {"Y": pos},
+        cursors,
+        ctx,
+    )
+    assert broker.pending == []  # 70% exposure + ~33% candidate > 80% cap
+
+
+def test_queue_buy_rejects_when_trades_per_day_limit_reached() -> None:
+    from qtrader.application.services.backtest import BacktestBroker, _Bars, _SimContext
+    from qtrader.domain.value_objects import Interval
+
+    bars = _trend_bars("X", days=40)
+    runner = _runner({"X": bars})[0]
+    broker = BacktestBroker()
+    entry_bar = bars[39]
+    snapshot = IndicatorEngine().compute(bars, "X", Interval.D1)
+    ctx = _SimContext(
+        sectors=None,
+        trades_today=10,
+        daily_pnl_pct=0.0,
+        cooldown_remaining_minutes=0.0,
+    )
+    runner._queue_buy(
+        broker,
+        entry_bar,
+        snapshot,
+        BacktestParams(),
+        Decimal("100000"),
+        {},
+        {"X": _Bars()},
+        ctx,
+    )
+    assert broker.pending == []  # default max_trades_per_day is 10
+
+
+def test_queue_buy_rejects_when_sector_limit_exceeded() -> None:
+    from qtrader.application.services.backtest import (
+        BacktestBroker,
+        _Bars,
+        _OpenPosition,
+        _SimContext,
+    )
+    from qtrader.domain.value_objects import Interval
+
+    bars = _trend_bars("X", days=40)
+    runner = _runner({"X": bars})[0]
+    broker = BacktestBroker()
+    entry_bar = bars[39]
+    snapshot = IndicatorEngine().compute(bars, "X", Interval.D1)
+    pos_y = _OpenPosition(
+        symbol="Y",
+        quantity=310,
+        entry_price=Decimal("100"),
+        stop_loss=Decimal("97"),
+        take_profit=Decimal("106"),
+        entry_ts=entry_bar.ts,
+        fees=Decimal(0),
+    )
+    pos_z = _OpenPosition(
+        symbol="Z",
+        quantity=100,
+        entry_price=Decimal("100"),
+        stop_loss=Decimal("97"),
+        take_profit=Decimal("106"),
+        entry_ts=entry_bar.ts,
+        fees=Decimal(0),
+    )
+    cursors = {"Y": _Bars(), "Z": _Bars()}
+    cursors["Y"].last_close = Decimal("100")
+    cursors["Z"].last_close = Decimal("100")
+    ctx = _SimContext(
+        sectors={"Y": "Tech", "Z": "Tech"},
+        trades_today=0,
+        daily_pnl_pct=0.0,
+        cooldown_remaining_minutes=0.0,
+    )
+    runner._queue_buy(
+        broker,
+        entry_bar,
+        snapshot,
+        BacktestParams(),
+        Decimal("59000"),
+        {"Y": pos_y, "Z": pos_z},
+        cursors,
+        ctx,
+    )
+    assert broker.pending == []  # $41k/$100k Tech > 40% per-sector cap
+
+
 def test_max_hold_bars_exits_at_close() -> None:
     symbol = "HOLD"
     start = datetime(2026, 1, 1, 9, 30, tzinfo=UTC)

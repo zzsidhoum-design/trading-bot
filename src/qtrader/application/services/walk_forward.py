@@ -62,6 +62,7 @@ class WalkForwardValidator:
         horizon_bars: int = 12,
         prob_buy: float = 0.52,
         prob_sell: float = 0.48,
+        sectors: dict[str, str] | None = None,
     ) -> None:
         self._prices = prices
         self._performance = performance
@@ -74,6 +75,7 @@ class WalkForwardValidator:
         self._horizon_bars = horizon_bars
         self._prob_buy = prob_buy
         self._prob_sell = prob_sell
+        self._sectors = sectors
 
     async def validate(
         self,
@@ -96,6 +98,7 @@ class WalkForwardValidator:
             return None
 
         all_trades: list[Decimal] = []
+        all_pnl_amounts: list[Decimal] = []
         curve: list[tuple[datetime, Decimal]] = []
         equity = initial_capital
         trained_any = False
@@ -121,6 +124,7 @@ class WalkForwardValidator:
                 slippage_bps,
             )
             all_trades.extend(t.pnl_pct for t in result.trades)
+            all_pnl_amounts.extend(t.pnl for t in result.trades)
             curve, equity = self._chain_curve(curve, result.equity_curve, equity)
             logger.info(
                 "walk_forward.fold",
@@ -140,6 +144,7 @@ class WalkForwardValidator:
             period_end=end,
             equity_curve=curve,
             trade_pnl_pcts=all_trades,
+            trade_pnl_amounts=all_pnl_amounts,
             interval=interval,
         )
         await self._performance.upsert(aggregate)
@@ -270,6 +275,7 @@ class WalkForwardValidator:
             model=model,
             model_prob_buy=self._prob_buy,
             model_prob_sell=self._prob_sell,
+            sectors=self._sectors,
         )
         params = BacktestParams(
             interval=interval,

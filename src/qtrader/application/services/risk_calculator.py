@@ -50,6 +50,7 @@ class RiskInputs:
     trades_today: int
     position_quantity: Decimal | None = None
     position_stop: Decimal | None = None
+    atr_stop_distance: Decimal | None = None
 
 
 def _dec(value: Decimal | float, quant: Decimal = _PRICE_QUANT) -> Decimal:
@@ -63,7 +64,11 @@ class RiskCalculator:
     def assess(self, inputs: RiskInputs) -> RiskAssessment:
         reasons: list[str] = []
         atr = inputs.atr or inputs.entry_price * Decimal("0.02")
-        atr_stop = atr * Decimal(str(self._policy.atr_stop_mult))
+        atr_stop = (
+            inputs.atr_stop_distance
+            if inputs.atr_stop_distance is not None
+            else atr * Decimal(str(self._policy.atr_stop_mult))
+        )
 
         stop_loss = _dec(inputs.entry_price - atr_stop)
         take_profit = _dec(

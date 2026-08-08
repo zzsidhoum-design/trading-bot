@@ -37,6 +37,20 @@ def test_buy_approved_sizing_and_brackets() -> None:
     assert assessment.risk_per_trade_pct == Decimal("0.0100")
 
 
+def test_buy_sizes_for_explicit_bracket_distance() -> None:
+    # A 3% stop bracket on a $100 entry is a $3 stop distance. 1% risk on
+    # $100k = $1000 -> 333.3333 shares (~$33.3k notional) with the stop at $97
+    # and target at $106, exactly matching the 3%/6% bracket.
+    assessment = RiskCalculator(RiskPolicy(risk_per_trade_pct=0.01)).assess(
+        _inputs(entry_price=Decimal("100"), atr_stop_distance=Decimal("3"))
+    )
+    assert assessment.approved is True
+    assert assessment.position_size == Decimal("333.3333")
+    assert assessment.stop_loss == Decimal("97")
+    assert assessment.take_profit == Decimal("106")
+    assert assessment.risk_per_trade_pct == Decimal("0.0100")
+
+
 def test_sell_without_position_rejected() -> None:
     assessment = RiskCalculator(RiskPolicy()).assess(_inputs(decision=Decision.SELL))
     assert assessment.approved is False

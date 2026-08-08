@@ -57,8 +57,15 @@ class PerformanceMetrics:
         trade_pnl_pcts: Sequence[Decimal],
         interval: Interval = Interval.D1,
         risk_free_rate: float = 0.0,
+        trade_pnl_amounts: Sequence[Decimal] | None = None,
     ) -> PerformanceSummary:
-        """Build a summary from (ts, equity) points and per-trade P/L percents."""
+        """Build a summary from (ts, equity) points and per-trade P/L percents.
+
+        ``trade_pnl_amounts`` (parallel to ``trade_pnl_pcts``) switches the
+        profit factor onto a single dollar-weighted basis — gross dollar profit
+        over gross dollar loss — so wins/losses are weighted by size, not by
+        their own return percent. Win rate is unaffected (sign is identical).
+        """
         pcts = _pct([eq for _, eq in equity_curve])
         n = len(pcts)
 
@@ -92,8 +99,9 @@ class PerformanceMetrics:
                     max_dd = dd
 
         trades_count = len(trade_pnl_pcts)
-        wins = [t for t in trade_pnl_pcts if t > 0]
-        losses = [t for t in trade_pnl_pcts if t < 0]
+        trade_basis = trade_pnl_amounts if trade_pnl_amounts is not None else trade_pnl_pcts
+        wins = [t for t in trade_basis if t > 0]
+        losses = [t for t in trade_basis if t < 0]
         gross_profit = sum(wins, _ZERO)
         gross_loss = abs(sum(losses, _ZERO))
         win_rate = (

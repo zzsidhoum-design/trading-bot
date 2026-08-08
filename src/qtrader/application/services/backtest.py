@@ -132,6 +132,21 @@ class _Bars:
     last_close: Decimal = Decimal(0)
 
 
+@dataclass(frozen=True, slots=True)
+class _SimContext:
+    """Live risk state threaded into each candidate buy during a replay.
+
+    Mirrors what the live RiskAgent would observe: current-day trade count,
+    mark-to-market return since the start of the day, per-symbol cooldown, and
+    the optional symbol->sector map used for the per-sector exposure limit.
+    """
+
+    sectors: dict[str, str] | None
+    trades_today: int
+    daily_pnl_pct: float
+    cooldown_remaining_minutes: float
+
+
 class BacktestBroker:
     """Accumulates market orders and fills them at the next bar's open.
 
@@ -282,6 +297,7 @@ class BacktestRunner:
         model: LogisticModel | None = None,
         model_prob_buy: float = 0.52,
         model_prob_sell: float = 0.48,
+        sectors: dict[str, str] | None = None,
     ) -> None:
         self._prices = prices
         self._backtests = backtests
@@ -292,6 +308,7 @@ class BacktestRunner:
         self._model = model
         self._model_prob_buy = model_prob_buy
         self._model_prob_sell = model_prob_sell
+        self._sectors = sectors
 
     async def run(
         self,
@@ -368,6 +385,7 @@ class BacktestRunner:
         params: BacktestParams,
         model_outputs: dict[str, dict[Any, float]] | None = None,
         series: dict[str, list[IndicatorSnapshot]] | None = None,
+        sectors: dict[str, str] | None = None,
     ) -> BacktestResult:
         broker = BacktestBroker(
             commission_bps=params.commission_bps, slippage_bps=params.slippage_bps
@@ -381,14 +399,25 @@ class BacktestRunner:
             model_outputs=model_outputs,
             series=series,
         )
+        sectors = sectors if sectors is not None else self._sectors
         cash = _dec(initial_capital)
         positions: dict[str, _OpenPosition] = {}
         cursors: dict[str, _Bars] = {}
         trades: list[ClosedTrade] = []
         equity_curve: list[tuple[datetime, Decimal]] = []
         last_ts = datetime.combine(run.end, time.min, tzinfo=UTC)
+        today: date | None = None
+        trades_today = 0
+        day_start_equity = _dec(initial_capital)
+        last_exit_ts: dict[str, datetime] = {}
 
         for ts, bars in self._group_bars(bars_by_symbol):
+            day = ts.date()
+            if day != today:
+                today = day
+                trades_today = 0
+                day_start_equity = self._equity(cash, positions, cursors)
+
             for bar in bars:
                 cursor = cursors.setdefault(bar.symbol, _Bars())
                 cursor.seen.append(bar)
@@ -396,11 +425,18 @@ class BacktestRunner:
 
                 for fill in broker.fills_at(bar):
                     if fill.side is TradeSide.BUY:
+                        was_open = bar.symbol in positions
                         cash = self._open_position(
                             fill, cash, positions, params, bar_index=len(cursor.seen)
                         )
+                        if not was_open and bar.symbol in positions:
+                            trades_today += 1
                     else:
+                        had_open = bar.symbol in positions
                         cash = self._close_position(fill, cash, positions, trades, outcome="signal")
+                        if had_open:
+                            trades_today += 1
+                            last_exit_ts[bar.symbol] = fill.ts
 
                 pos = positions.get(bar.symbol)
                 if pos is not None and pos.entry_ts < bar.ts:
@@ -422,11 +458,27 @@ class BacktestRunner:
                             ts=bar.ts,
                         )
                         cash = self._close_position(fill, cash, positions, trades, outcome=outcome)
+                        trades_today += 1
+                        last_exit_ts[bar.symbol] = fill.ts
 
                 decision, snapshot = signals.evaluate(bar.symbol, cursor.seen, params.interval)
                 if decision is Decision.BUY and bar.symbol not in positions:
+                    cooldown = 0.0
+                    last_exit = last_exit_ts.get(bar.symbol)
+                    if last_exit is not None:
+                        cooldown = max(0.0, (bar.ts - last_exit).total_seconds() / 60.0)
+                    daily_pnl = 0.0
+                    if day_start_equity:
+                        day_eq = self._equity(cash, positions, cursors)
+                        daily_pnl = float((day_eq - day_start_equity) / day_start_equity)
+                    ctx = _SimContext(
+                        sectors=sectors,
+                        trades_today=trades_today,
+                        daily_pnl_pct=daily_pnl,
+                        cooldown_remaining_minutes=cooldown,
+                    )
                     cash = self._queue_buy(
-                        broker, bar, snapshot, params, cash, positions, cursors
+                        broker, bar, snapshot, params, cash, positions, cursors, ctx
                     )
                 elif decision is Decision.SELL and bar.symbol in positions:
                     broker.queue(
@@ -463,6 +515,7 @@ class BacktestRunner:
             period_end=run.end,
             equity_curve=equity_curve,
             trade_pnl_pcts=[t.pnl_pct for t in trades],
+            trade_pnl_amounts=[t.pnl for t in trades],
             interval=params.interval,
         )
         finished = self._complete(run, final_capital, summary)
@@ -482,23 +535,49 @@ class BacktestRunner:
         cash: Decimal,
         positions: dict[str, _OpenPosition],
         cursors: dict[str, _Bars],
+        ctx: _SimContext,
     ) -> Decimal:
         if snapshot is None or snapshot.atr is None:
             return cash
         equity = self._equity(cash, positions, cursors)
+        exposure_pct = 0.0
+        sector_pct = 0.0
+        if equity > 0:
+            if ctx.sectors is None:
+                # No sector attribution available; only total exposure is enforceable.
+                for symbol, pos in positions.items():
+                    cursor = cursors.get(symbol)
+                    price = cursor.last_close if cursor else pos.entry_price
+                    exposure_pct += float(pos.quantity * price / equity)
+            else:
+                sector_notional: dict[str, Decimal] = {}
+                for symbol, pos in positions.items():
+                    cursor = cursors.get(symbol)
+                    price = cursor.last_close if cursor else pos.entry_price
+                    value = pos.quantity * price
+                    exposure_pct += float(value / equity)
+                    sector = ctx.sectors.get(symbol, "unknown")
+                    sector_notional[sector] = sector_notional.get(sector, Decimal(0)) + value
+                if sector_notional:
+                    sector_pct = float(max(sector_notional.values()) / equity)
+        entry = bar.close
+        # Size for the exact stop the bracket will apply in _open_position
+        # (entry * stop_loss_pct), so the real risk per trade is 1% of equity.
+        atr_stop_distance = entry * _dec(params.stop_loss_pct)
         inputs = RiskInputs(
             decision=Decision.BUY,
             symbol=bar.symbol,
-            entry_price=bar.close,
+            entry_price=entry,
             atr=snapshot.atr,
+            atr_stop_distance=atr_stop_distance,
             equity=equity,
-            current_exposure_pct=0.0,
+            current_exposure_pct=exposure_pct,
             open_positions=len(positions),
-            sector_exposure_pct=0.0,
-            adv_daily=bar.volume * bar.close,
-            cooldown_remaining_minutes=0.0,
-            daily_pnl_pct=0.0,
-            trades_today=0,
+            sector_exposure_pct=sector_pct,
+            adv_daily=bar.volume * entry,
+            cooldown_remaining_minutes=ctx.cooldown_remaining_minutes,
+            daily_pnl_pct=ctx.daily_pnl_pct,
+            trades_today=ctx.trades_today,
         )
         assessment = self._risk.assess(inputs)
         if not assessment.approved or not assessment.position_size:

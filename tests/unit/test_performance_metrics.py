@@ -54,6 +54,24 @@ def test_profit_factor_and_metrics_on_wins_only() -> None:
     assert summary.sortino is None  # no downside periods
 
 
+def test_profit_factor_dollar_weighted_when_amounts_given() -> None:
+    # A $1 win on a big position and a $100 loss on a tiny position: the
+    # pnl_pct basis (0.01 / 0.10 = PF 0.1) hides that the loss is 100x the win
+    # in dollars. The dollar-weighted basis reports gross $1 / gross $100.
+    curve = _curve([("d1", "100"), ("d2", "100.5"), ("d3", "99")])
+    summary = PerformanceMetrics.from_series(
+        strategy="test",
+        mode=TradingMode.BACKTEST,
+        period_start=date(2026, 1, 1),
+        period_end=date(2026, 1, 3),
+        equity_curve=curve,
+        trade_pnl_pcts=[Decimal("0.01"), Decimal("-0.10")],
+        trade_pnl_amounts=[Decimal("1"), Decimal("-100")],
+    )
+    assert summary.profit_factor == Decimal("0.01")
+    assert summary.win_rate == Decimal("0.5")
+
+
 def test_sharpe_positive_for_steady_uptrend() -> None:
     curve = _curve(
         [(str(i), str(100 + 2 * i)) for i in range(1, 21)]
