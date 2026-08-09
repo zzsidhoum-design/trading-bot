@@ -291,6 +291,25 @@ always-long (−6.06%) and shuffled-style random (−26.88%) controls, so the
 realistic costs) survives the fix, but the magnitude and the "passes the
 acceptance bar" claim do **not** transfer.
 
+**Follow-up #1 — resolved (re-run of the P19 0.60/0.40 protocol on the fixed
+engine).** Faithful re-execution of the frozen protocol (498 symbols,
+11-feature logistic + Platt per fold, calendar-PIT folds, adjusted bars,
+fixed 0.60/0.40, 1%-risk) on the current engine:
+
+```
+V1 bracket 3/6 @ 1/5bp    trades=283  win=37.46%  pf=1.144  sharpe= 0.398  dd=-18.93%  ret= +28.44%   (P19: +28.67%)
+V2 bracket 3/6 @ 10/50bp  trades=274  win=33.58%  pf=0.896  sharpe=-0.197  dd=-31.68%  ret= -18.31%   (P19:  -8.99%)
+V3 time-12 @ 10/50bp      trades=240  win=29.17%  pf=0.987  sharpe= 0.017  dd=-38.64%  ret=  -6.25%   (P19: +58.37%)
+```
+
+Charging exit commissions collapses V3 from **+58.37% to −6.25%** — the P19
+headline pass was an artifact of the zero-exit-cost engine. V1 at 1/5bp is
+essentially unchanged (+28.44%, exit cost negligible there). On the fixed
+engine V3's fixed-threshold model is statistically indistinguishable from
+flat/always-long (AL time-12 −6.06% at the same costs), closing the last
+measured claim of an ML edge. (Driver temp: `p19_reexec.py` →
+`p19_reexec.json`.)
+
 ### 9.2 Earlier reports
 
 - `04-final-report.md` / `13-final-report.md`: "no OOS edge; bracket math +
@@ -315,7 +334,8 @@ acceptance bar" claim do **not** transfer.
 
 Follow-ups (each is a correctness/measurement fix, not tuning):
 1. Re-run the P19 0.60/0.40 protocol (V1/V2/V3 + controls) on the fixed
-   engine to re-derive comparable magnitudes.
+   engine to re-derive comparable magnitudes. **(done — V3 +58.37% → −6.25%;
+   see §9.1)**
 2. Regime-labelled, out-of-sample test on the extended adjusted data
    (2026-08-08 → present) so the `n/a` cold-start bucket shrinks and the
    per-regime claims can be tested forward.
