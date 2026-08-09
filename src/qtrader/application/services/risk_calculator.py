@@ -63,11 +63,24 @@ class RiskCalculator:
 
     def assess(self, inputs: RiskInputs) -> RiskAssessment:
         reasons: list[str] = []
-        atr = inputs.atr or inputs.entry_price * Decimal("0.02")
+        # A SELL closes an existing position (already sized, often with its own
+        # stop), so it must never be blocked by missing indicator data. Only
+        # position-opening decisions need ATR to size the stop.
+        if (
+            inputs.decision is not Decision.SELL
+            and inputs.atr is None
+            and inputs.atr_stop_distance is None
+        ):
+            reasons.append("no ATR data (unreliable indicator data)")
+        atr = inputs.atr if inputs.atr is not None else Decimal(0)
         atr_stop = (
             inputs.atr_stop_distance
             if inputs.atr_stop_distance is not None
-            else atr * Decimal(str(self._policy.atr_stop_mult))
+            else (
+                atr * Decimal(str(self._policy.atr_stop_mult))
+                if inputs.atr is not None
+                else Decimal(0)
+            )
         )
 
         stop_loss = _dec(inputs.entry_price - atr_stop)

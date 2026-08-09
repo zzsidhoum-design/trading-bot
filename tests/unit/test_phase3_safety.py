@@ -1,22 +1,22 @@
-"""Phase 3 — safety-gap unit tests.
+"""Phase 3 — safety & risk-gap unit tests.
 
-Documents the failure / risk behaviors measured during final validation:
+Validates the failure/risk guarantees measured during final validation and the
+fixes that close the Phase 3 gaps:
 
 A) Single-agent failure must never cause unsafe trading: the ensemble HOLDs
    when evidence coverage drops below its floor, and a dead prediction agent
    only ever makes the system LESS aggressive (never more).
-B) Risk-manager gaps in the live/paper wiring: daily-loss and ADV limits are
-   enforceable by the calculator but the live RiskAgent always feeds
-   ``daily_pnl_pct=0.0`` / ``adv_daily=None``, so they can never fire; a
-   missing ATR falls back to a 2% proxy instead of halting; decision-time
-   prices are never checked for freshness.
-C) Stop losses are never submitted to the broker: the execution path sends
-   exactly one MARKET order and the paper broker does not model stops.
+B) Risk-manager limits are actually enforceable in the live/paper path: the
+   RiskAgent feeds real intraday PnL (so the daily-loss limit fires) and real
+   ADV (so the liquidity limit fires); a missing ATR halts instead of sizing
+   off a 2% proxy; decision-time prices must be fresh.
+C) Stop losses ARE submitted: the paper broker registers a bracket stop for
+   every bracketed BUY and simulates the trigger against the last price.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from qtrader.application.agents.execution import ExecutionAgent
@@ -88,16 +88,6 @@ def test_dead_prediction_never_makes_system_more_aggressive() -> None:
     assert without_pred.decision is Decision.HOLD
 
 
-def test_all_agents_down_holds() -> None:
-    outcome = EnsembleDecisionStrategy(dict(DEFAULT_WEIGHTS)).decide(
-        _evidence({"technical": 0.5, "news": 0.5, "fundamental": 0.5})
-    )
-    # prediction absent -> coverage (0.30+0.25+0.20)/1.0 = 0.75 >= 0.5, so this
-    # trades; the HOLD guarantee is about missing sources dropping below floor,
-    # which requires BOTH technical and prediction. Keep explicit:
-    assert outcome.decision is Decision.HOLD or outcome.decision is not None
-
-
 # ------------------------------------------------------------- B) risk gaps
 
 def _inputs(**overrides) -> RiskInputs:
@@ -119,6 +109,16 @@ def _inputs(**overrides) -> RiskInputs:
     return RiskInputs(**base)
 
 
+def _decision(decision: Decision = Decision.BUY) -> DecisionMade:
+    return DecisionMade(
+        decision_uuid="d-1",
+        symbol="AAPL",
+        decision=decision,
+        confidence=0.8,
+        rationale="x",
+    )
+
+
 def test_daily_loss_limit_enforced_when_reported() -> None:
     calc = RiskCalculator(RiskPolicy())
     assessment = calc.assess(_inputs(daily_pnl_pct=-0.05))
@@ -126,32 +126,106 @@ def test_daily_loss_limit_enforced_when_reported() -> None:
     assert any("daily loss" in r for r in assessment.rejection_reasons)
 
 
-def test_daily_loss_never_fires_with_live_default_zero() -> None:
-    # RiskAgent always passes daily_pnl_pct=0.0 (src/.../agents/risk.py:114),
-    # so the live/paper path can never trip the 3% daily-loss limit.
-    calc = RiskCalculator(RiskPolicy())
-    assessment = calc.assess(_inputs(daily_pnl_pct=0.0))
-    assert assessment.approved is True
-    assert not any("daily loss" in r for r in assessment.rejection_reasons)
-
-
 def test_adv_limit_skipped_when_none() -> None:
     calc = RiskCalculator(RiskPolicy())
     with_adv = calc.assess(_inputs(adv_daily=Decimal("1000")))
     assert any("ADV" in r for r in with_adv.rejection_reasons)
-    # live RiskAgent passes adv_daily=None (risk.py:112) -> never enforced.
+    # A missing ADV (no volume history) is skipped, not fatal: liquidity
+    # cannot be checked without data, but the other limits still apply.
     no_adv = calc.assess(_inputs(adv_daily=None))
     assert no_adv.approved is True
-    assert not any("ADV" in r for r in no_adv.rejection_reasons)
 
 
-def test_missing_atr_falls_back_to_two_percent_and_trades() -> None:
-    # atr=None defaults to 2% of price (risk_calculator.py:66): the system
-    # trades on an ATR proxy instead of halting on unreliable indicator data.
+def test_missing_atr_rejected_instead_of_two_percent_proxy() -> None:
     calc = RiskCalculator(RiskPolicy())
+    # atr=None used to fall back to 2% of price and trade (risk_calculator
+    # pre-fix): now it halts on unreliable indicator data.
     assessment = calc.assess(_inputs(atr=None))
-    assert assessment.approved is True
-    assert assessment.metadata["atr"] == 2.0
+    assert assessment.approved is False
+    assert any("no ATR" in r for r in assessment.rejection_reasons)
+    # An explicit bracket distance sizes correctly without ATR.
+    explicit = calc.assess(_inputs(atr=None, atr_stop_distance=Decimal("3")))
+    assert explicit.approved is True
+    assert explicit.stop_loss == Decimal("97")
+
+
+def _risk_agent(**kwargs) -> RiskAgent:
+    return RiskAgent(
+        calculator=kwargs.get("calculator", RiskCalculator(RiskPolicy())),
+        risk_repo=kwargs.get("risk_repo", FakeRiskRepository()),
+        portfolio_service=kwargs.get(
+            "portfolio_service", PortfolioService(FakePortfolioRepository(default_portfolio()))
+        ),
+        positions=kwargs.get("positions", FakePositionRepository()),
+        orders=kwargs.get("orders", FakeOrderRepository()),
+        prices=kwargs.get("prices", FakePriceRepository()),
+        indicators=kwargs.get("indicators", FakeIndicatorRepository()),
+        stocks=kwargs.get("stocks", FakeStockRepository()),
+        bus=kwargs.get("bus", FakeEventBus()),
+    )
+
+
+def _filled_order(*, side, qty: int, fill: str, created: datetime) -> Order:
+    return Order(
+        portfolio_id=1,
+        stock_id=1,
+        side=side,
+        order_type=OrderType.MARKET,
+        quantity=qty,
+        mode=TradingMode.PAPER,
+        idempotency_key="k",
+        symbol="AAPL",
+        status=OrderStatus.FILLED,
+        filled_qty=qty,
+        avg_fill_price=Money(fill),
+        created_at=created,
+    )
+
+
+async def test_agent_enforces_daily_loss_on_todays_realized_loss() -> None:
+    # A BUY filled yesterday at $100 and a SELL filled today at $69.90 realize
+    # -$3,010 = -3.01% of $100k equity: the live RiskAgent must reject on the
+    # daily-loss limit (it used to always feed daily_pnl_pct=0.0 and could
+    # never fire).
+    now = datetime.now(UTC)
+    buy = _filled_order(side=TradeSide.BUY, qty=100, fill="100", created=now - timedelta(days=1))
+    sell = _filled_order(
+        side=TradeSide.SELL, qty=100, fill="69.9", created=now - timedelta(minutes=6)
+    )
+    agent = _risk_agent(orders=FakeOrderRepository([buy, sell]))
+    assessment = await agent.assess_symbol(_decision())
+    assert assessment.approved is False
+    assert any("daily loss" in r for r in assessment.rejection_reasons)
+
+
+class _VolumeHistoryRepository(FakePriceRepository):
+    """21 daily bars at $100 with 1,000 shares each -> $100k ADV."""
+
+    async def history(self, symbol, interval, start=None, end=None, limit=500):
+        close = Decimal(self._close)
+        ts = datetime.now(UTC)
+        return [
+            PriceBar(
+                symbol=symbol,
+                interval=interval,
+                ts=ts,
+                open=close,
+                high=close,
+                low=close,
+                close=close,
+                volume=Decimal("1000"),
+            )
+            for _ in range(21)
+        ]
+
+
+async def test_agent_enforces_adv_from_volume_history() -> None:
+    # ADV = $100k; the sized position (~$33.3k) is 33% of ADV >> 1% limit. The
+    # live agent used to pass adv_daily=None so this could never fire.
+    agent = _risk_agent(prices=_VolumeHistoryRepository(close="100"))
+    assessment = await agent.assess_symbol(_decision())
+    assert assessment.approved is False
+    assert any("ADV" in r for r in assessment.rejection_reasons)
 
 
 class _StalePriceRepository(FakePriceRepository):
@@ -173,36 +247,19 @@ class _StalePriceRepository(FakePriceRepository):
         )
 
 
-def _risk_agent(**kwargs) -> RiskAgent:
-    return RiskAgent(
-        calculator=kwargs.get("calculator", RiskCalculator(RiskPolicy())),
-        risk_repo=kwargs.get("risk_repo", FakeRiskRepository()),
-        portfolio_service=kwargs.get(
-            "portfolio_service", PortfolioService(FakePortfolioRepository(default_portfolio()))
-        ),
-        positions=kwargs.get("positions", FakePositionRepository()),
-        orders=kwargs.get("orders", FakeOrderRepository()),
-        prices=kwargs.get("prices", FakePriceRepository()),
-        indicators=kwargs.get("indicators", FakeIndicatorRepository()),
-        stocks=kwargs.get("stocks", FakeStockRepository()),
-        bus=kwargs.get("bus", FakeEventBus()),
-    )
-
-
-async def test_stale_price_not_checked_at_decision_time() -> None:
-    # Decision-time price freshness is not validated: a bar four months old is
-    # accepted as the entry price and the order is approved.
+async def test_stale_price_rejected_at_decision_time() -> None:
+    # A bar four months old used to be accepted as the entry price: now the
+    # decision-time freshness check rejects it.
     agent = _risk_agent(prices=_StalePriceRepository(close="100"))
-    decision = DecisionMade(
-        decision_uuid="d-stale",
-        symbol="AAPL",
-        decision=Decision.BUY,
-        confidence=0.8,
-        rationale="x",
-    )
-    assessment = await agent.assess_symbol(decision)
+    assessment = await agent.assess_symbol(_decision())
+    assert assessment.approved is False
+    assert any("stale price" in r for r in assessment.rejection_reasons)
+
+
+async def test_fresh_price_still_approved() -> None:
+    agent = _risk_agent()
+    assessment = await agent.assess_symbol(_decision())
     assert assessment.approved is True
-    assert not any("stale" in r.lower() for r in assessment.rejection_reasons)
 
 
 # ------------------------------------------------------------- C) stop losses
@@ -224,20 +281,46 @@ def _order_with_brackets() -> Order:
     )
 
 
-async def test_paper_broker_receives_no_stop_order() -> None:
+async def test_paper_broker_registers_bracket_stop_order() -> None:
     broker = PaperBroker(prices=FakePriceRepository(close="100"))
     broker_order_id = await broker.submit_order(_order_with_brackets())
-    # Exactly one order exists at the broker and it is the raw market order.
-    assert len(broker._orders) == 1
-    stored = broker._orders[broker_order_id]
-    assert stored.order_type is OrderType.MARKET
-    assert stored.stop_loss is not None and stored.take_profit is not None
-    # No stop/limit order was ever created; the fill ignores the brackets.
+    # The broker now receives the bracket: a child SELL STOP is registered.
+    assert len(broker._orders) == 2
+    market = broker._orders[broker_order_id]
+    assert market.order_type is OrderType.MARKET
+    stop = broker._orders[f"{broker_order_id}-stop"]
+    assert stop.order_type is OrderType.STOP
+    assert stop.side is TradeSide.SELL
+    assert stop.stop_price is not None and stop.stop_price.amount == Decimal("95")
+    assert stop.take_profit is not None and stop.take_profit.amount == Decimal("110")
     fill = await broker.get_order_status(broker_order_id)
     assert fill.status is OrderStatus.FILLED
 
 
-async def test_execution_submits_single_market_order_despite_brackets() -> None:
+async def test_paper_broker_stop_pending_inside_bracket() -> None:
+    broker = PaperBroker(prices=FakePriceRepository(close="100"))
+    broker_order_id = await broker.submit_order(_order_with_brackets())
+    stop_fill = await broker.get_order_status(f"{broker_order_id}-stop")
+    assert stop_fill.status is OrderStatus.PENDING
+
+
+async def test_paper_broker_stop_fills_through_break() -> None:
+    broker = PaperBroker(prices=FakePriceRepository(close="94"))
+    broker_order_id = await broker.submit_order(_order_with_brackets())
+    stop_fill = await broker.get_order_status(f"{broker_order_id}-stop")
+    assert stop_fill.status is OrderStatus.FILLED
+    assert stop_fill.avg_fill_price == Decimal("94")
+
+
+async def test_paper_broker_take_profit_fills_at_target() -> None:
+    broker = PaperBroker(prices=FakePriceRepository(close="112"))
+    broker_order_id = await broker.submit_order(_order_with_brackets())
+    stop_fill = await broker.get_order_status(f"{broker_order_id}-stop")
+    assert stop_fill.status is OrderStatus.FILLED
+    assert stop_fill.avg_fill_price == Decimal("110")
+
+
+async def test_execution_submits_market_order_with_bracket_registered() -> None:
     broker = PaperBroker(prices=FakePriceRepository(close="100"))
     portfolios = FakePortfolioRepository(default_portfolio())
     orders = FakeOrderRepository()
@@ -266,8 +349,12 @@ async def test_execution_submits_single_market_order_despite_brackets() -> None:
     )
     result = await agent.execute(proposal)
     assert result is not None
-    assert len(broker._orders) == 1
-    submitted = next(iter(broker._orders.values()))
-    assert submitted.order_type is OrderType.MARKET
+    market_orders = [o for o in broker._orders.values() if o.order_type is OrderType.MARKET]
+    stop_orders = [o for o in broker._orders.values() if o.order_type is OrderType.STOP]
+    assert len(market_orders) == 1
+    assert len(stop_orders) == 1
+    assert stop_orders[0].stop_price is not None and stop_orders[0].stop_price.amount == Decimal(
+        "95"
+    )
     saved = (await orders.list_by_portfolio(1))[0]
     assert saved.status is OrderStatus.FILLED

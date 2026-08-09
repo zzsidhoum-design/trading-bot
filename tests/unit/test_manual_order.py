@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 
@@ -17,8 +18,8 @@ from qtrader.application.use_cases.manual_order import (
     ValidationError,
 )
 from qtrader.config.settings import Settings
-from qtrader.domain.entities import Portfolio, Stock
-from qtrader.domain.value_objects import OrderStatus, TradingMode
+from qtrader.domain.entities import IndicatorSnapshot, Portfolio, Stock
+from qtrader.domain.value_objects import Interval, OrderStatus, TradingMode
 from tests.unit.fakes_phase7 import (
     FakeBrokerGateway,
     FakeEventBus,
@@ -65,7 +66,14 @@ def _build(
     prices = FakePriceRepository(
         bar("AAPL", datetime(2026, 8, 1, tzinfo=UTC), "99", "101", "98", "100")
     )
-    indicators = FakeIndicatorRepository()
+    indicators = FakeIndicatorRepository(
+        IndicatorSnapshot(
+            symbol="AAPL",
+            interval=Interval.D1,
+            ts=datetime(2026, 8, 1, tzinfo=UTC),
+            atr=Decimal("2"),
+        )
+    )
     positions = FakePositionRepository(positions or [])
     orders = FakeOrderRepository()
     trades = FakeTradeRepository()

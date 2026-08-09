@@ -292,3 +292,38 @@ on a pre-registered holdout.
   holdout), `p3_gate_check.py` (gate denial), `p3_curves.pkl` (curves/trades).
 - Prior audits: `docs/audit/15-phase1-strategy-audit.md`,
   `docs/audit/16-phase2-agent-ml-audit.md`, `docs/audit/07-baseline-freeze-v2.md`.
+
+## Addendum — risk/safety gap fixes (post-audit, 2026-08-09)
+
+The four §5/§4 wiring gaps flagged by the audit were fixed and locked with
+tests; the NOT-READY verdict (no OOS edge, gate denial, no validated
+configuration) is **unchanged** — paper trading still must not be run.
+
+1. **Daily-loss limit now fires live.** `RiskAgent` computes real intraday PnL
+   (today's realized PnL from matched BUY→SELL fills plus mark-to-market change
+   on open positions) instead of hardcoding `daily_pnl_pct=0.0`
+   (`risk.py`, `_daily_pnl_pct`; `risk.py:114` no longer exists).
+2. **ADV limit now fires live.** `RiskAgent` feeds ADV computed from the last
+   21 daily bars' dollar volume instead of `adv_daily=None`
+   (`risk.py`, `_adv_daily`).
+3. **Missing ATR halts position-opening decisions.** `RiskCalculator` rejects
+   with `no ATR data` instead of sizing off a 2% proxy; an explicit bracket
+   distance (`atr_stop_distance`) still sizes without ATR, and SELL
+   (position-closing) orders are never blocked on missing indicators
+   (`risk_calculator.py:66` fallback removed).
+4. **Decision-time freshness check.** `RiskAgent` rejects when the entry bar
+   is older than the interval-specific staleness ceiling (D1 > 5 days, M5 >
+   15 min, …) instead of pricing off a months-old bar
+   (`risk.py`, `_is_stale`).
+5. **Stops are submitted.** `PaperBroker` registers a child SELL STOP bracket
+   for every bracketed BUY and simulates triggers against the last known price
+   (fill through the stop on a break, at the take-profit on a target hit) —
+   the backtest exit model now has a paper counterpart
+   (`brokers/paper.py`).
+6. **Manual orders** size off the user's explicit stop when no ATR snapshot
+   exists (`use_cases/manual_order.py`).
+
+Tests: `tests/unit/test_phase3_safety.py` rewritten to assert the fixed
+behavior (16 tests) plus the calculator/risk-agent/paper-broker/manual-order
+suites updated; full unit+integration run **401 passed, 26 skipped**; ruff
+clean.

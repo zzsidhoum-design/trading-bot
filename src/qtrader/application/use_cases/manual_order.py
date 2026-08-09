@@ -162,12 +162,17 @@ class ManualOrder:
         existing = next(
             (p for p in open_positions if p.symbol == symbol), None
         )
+        stop_dec = Decimal(stop_loss) if stop_loss else None
+        atr_stop_distance = (
+            entry - stop_dec if side == "BUY" and stop_dec is not None else None
+        )
         assessment = self._risk.assess(
             RiskInputs(
                 decision=Decision.BUY if side == "BUY" else Decision.SELL,
                 symbol=symbol,
                 entry_price=entry,
                 atr=snapshot.atr if snapshot else None,
+                atr_stop_distance=atr_stop_distance,
                 equity=equity,
                 current_exposure_pct=exposure_pct,
                 open_positions=len(open_positions),
