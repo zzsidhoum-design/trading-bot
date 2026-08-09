@@ -162,6 +162,10 @@ class BacktestBroker:
     def queue(self, order: BacktestOrder) -> None:
         self._pending.append(order)
 
+    def commission_for(self, quantity: int, price: Decimal) -> Decimal:
+        """Commission on a (quantity, price) fill — shared by all exit fills."""
+        return (price * _dec(quantity) * self._commission_rate).quantize(Decimal("0.01"))
+
     def fills_at(self, bar: PriceBar) -> list[BacktestFill]:
         """Consume every queued order for ``bar.symbol`` and fill at bar.open."""
         fills: list[BacktestFill] = []
@@ -175,9 +179,7 @@ class BacktestBroker:
             else:
                 price = bar.open * (Decimal(1) - self._slippage_rate)
             price = price.quantize(_PRICE_QUANT)
-            commission = (price * _dec(order.quantity) * self._commission_rate).quantize(
-                Decimal("0.01")
-            )
+            commission = self.commission_for(order.quantity, price)
             fills.append(
                 BacktestFill(
                     symbol=order.symbol,
@@ -455,7 +457,7 @@ class BacktestRunner:
                             side=TradeSide.SELL,
                             quantity=pos.quantity,
                             price=exit_price,
-                            commission=Decimal(0),
+                            commission=broker.commission_for(pos.quantity, exit_price),
                             ts=bar.ts,
                         )
                         cash = self._close_position(fill, cash, positions, trades, outcome=outcome)
@@ -503,7 +505,7 @@ class BacktestRunner:
                 side=TradeSide.SELL,
                 quantity=pos.quantity,
                 price=end_cursor.last_close,
-                commission=Decimal(0),
+                commission=broker.commission_for(pos.quantity, end_cursor.last_close),
                 ts=last_ts,
             )
             cash = self._close_position(fill, cash, positions, trades, outcome="end_of_test")

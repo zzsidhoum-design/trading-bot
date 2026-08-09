@@ -466,6 +466,56 @@ def test_model_outputs_drive_decisions_without_a_model_instance() -> None:
     assert result.trades[0].exit_time >= flat_bars[41].ts
 
 
+def test_exit_fills_pay_commission() -> None:
+    # Bracket/time/end exits previously filled with commission=0, understating
+    # costs. A time exit must now pay the same bps rate as the entry.
+    from qtrader.domain.entities import BacktestRun
+    from qtrader.domain.value_objects import Interval, Money
+
+    symbol = "FEE"
+    flat_bars = [
+        bar(
+            symbol,
+            datetime(2026, 1, 1, tzinfo=UTC) + timedelta(days=i),
+            open="100",
+            high="100.5",
+            low="99.5",
+            close="100",
+            volume="1000000",
+        )
+        for i in range(60)
+    ]
+    bars = {symbol: flat_bars}
+    series = {
+        symbol: IndicatorEngine().compute_series(flat_bars, symbol, Interval.D1)
+    }
+    model_outputs = {symbol: {flat_bars[33].ts: 0.9}}
+    runner, _, _ = _runner(bars, commission_bps=10.0, model=None)
+    run = BacktestRun(
+        name="exit-fees",
+        universe=[symbol],
+        start=date(2026, 1, 1),
+        end=date(2026, 3, 31),
+        initial_capital=Money(Decimal("100000")),
+    )
+    result = runner._simulate(
+        run,
+        bars,
+        Decimal("100000"),
+        BacktestParams(commission_bps=10.0, max_hold_bars=3),
+        model_outputs=model_outputs,
+        series=series,
+    )
+    assert len(result.trades) == 1
+    trade = result.trades[0]
+    assert trade.outcome == "time"
+    qty = trade.quantity
+    # Entry fill at open 100 + time exit at close 100, 10bp each side.
+    expected = Decimal("100") * qty * (Decimal("10") / Decimal("10000")) * 2
+    assert trade.fees == expected
+    assert trade.fees > 0
+
+
 @pytest.mark.asyncio
 async def test_full_replay_produces_trades_and_persists() -> None:
     symbol = "SIG"
