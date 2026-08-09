@@ -231,7 +231,7 @@ class _SignalEngine:
         if len(bars) < max(self._warmup, 3):
             return Decision.HOLD, None
         model = self._model
-        if model is not None:
+        if model is not None or self._model_outputs is not None:
             prob_up = self._prob_up(symbol, bars, model)
             if prob_up < self._prob_buy and prob_up > self._prob_sell:
                 return Decision.HOLD, None
@@ -253,10 +253,11 @@ class _SignalEngine:
         return self._indicators.compute(bars, symbol, interval)
 
     def _prob_up(
-        self, symbol: str, bars: list[PriceBar], model: LogisticModel
+        self, symbol: str, bars: list[PriceBar], model: LogisticModel | None
     ) -> float:
         if self._model_outputs is not None:
             return self._model_outputs.get(symbol, {}).get(bars[-1].ts, 0.5)
+        assert model is not None
         feats = price_features_from_bars(bars[-self._model_lookback :])
         return model.predict(feats).prob_up
 

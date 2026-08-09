@@ -416,6 +416,56 @@ def test_max_hold_bars_exits_at_close() -> None:
     assert timed[0].exit_time > timed[0].entry_time
 
 
+def test_model_outputs_drive_decisions_without_a_model_instance() -> None:
+    # The strategy framework emits prob_up series without a fitted model; the
+    # engine must honor model_outputs even when ``model`` is None.
+    from qtrader.domain.entities import BacktestRun
+    from qtrader.domain.value_objects import Interval, Money
+
+    symbol = "MOD"
+    flat_bars = [
+        bar(
+            symbol,
+            datetime(2026, 1, 1, tzinfo=UTC) + timedelta(days=i),
+            open="100",
+            high="100.5",
+            low="99.5",
+            close="100",
+            volume="1000000",
+        )
+        for i in range(60)
+    ]
+    bars = {symbol: flat_bars}
+    series = {
+        symbol: IndicatorEngine().compute_series(flat_bars, symbol, Interval.D1)
+    }
+    model_outputs = {
+        symbol: {
+            flat_bars[33].ts: 0.9,
+            flat_bars[40].ts: 0.1,
+        }
+    }
+    runner, _, _ = _runner(bars, model=None)
+    run = BacktestRun(
+        name="probs-only",
+        universe=[symbol],
+        start=date(2026, 1, 1),
+        end=date(2026, 3, 31),
+        initial_capital=Money(Decimal("100000")),
+    )
+    result = runner._simulate(
+        run,
+        bars,
+        Decimal("100000"),
+        BacktestParams(commission_bps=1.0),
+        model_outputs=model_outputs,
+        series=series,
+    )
+    assert result.summary.trades_count == 1
+    assert result.trades[0].entry_time == flat_bars[34].ts  # next-bar open fill
+    assert result.trades[0].exit_time >= flat_bars[41].ts
+
+
 @pytest.mark.asyncio
 async def test_full_replay_produces_trades_and_persists() -> None:
     symbol = "SIG"
