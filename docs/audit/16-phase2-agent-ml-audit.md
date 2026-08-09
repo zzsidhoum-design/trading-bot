@@ -237,6 +237,22 @@ ret_60       0.135    range_ratio  0.076    ret_5 0.031 / ret_20 0.018 / ret_1 0
   up-rate 54.3–55.5%); high-confidence bins are tiny (0.70–0.80: n=84, up
   0.357; 0.80+: n=39, up 0.615) and statistically meaningless.
 
+**Contrarian (inverted) control** — is the low-probability tail mis-signed? The
+engine is long-only (a SELL signal only closes a long; `backtest.py` §SELL,
+`risk_calculator.py` "SELL = close an existing position"), so `prob → 1−prob`
+is not "short the model" — it is **long-only buying of the model's own
+SELL-region bars** (prob ≤ 0.48), the same bars whose pooled up-rate the
+calibration shows as inverted. Under time-12 this bought-set wins on paper
+(**+47.57%** vs the model's own +25.39%, 132 trades, PF 1.50) while
+shuffled same-rate controls lose (−25…−29% across seeds), which superficially
+suggests the tail is systematically mis-signed. Fold attribution kills the
+claim: the **entire** profit is 42 trades in fold 2 (+$67,966 of $100k);
+folds 0/1 lost (−$8.1k/−$4.5k) and fold 3 produced zero trades. Prediction
+only, by contrast, earns across folds 0–2 (+27.7k/+1.6k/+4.0k, fold 3 −7.3k).
+The contrarian read is a **single-fold, small-sample artifact**, not an edge —
+but it does confirm the model's tail calibration is unreliable and worth
+re-examining per regime.
+
 ## 7. Decision traceability
 
 Traceable today: decision, participating agents, confidence (per trade, from
@@ -276,6 +292,10 @@ Follow-ups (correctness/measurement fixes, not tuning):
    OOS window shrinks the `n/a` regime bucket.
 6. Keep everything behind the gate; the live agent path ≠ backtest path
    (Phase-7 finding) and must be closed before any graduation.
+7. Re-check the low-probability tail per fold/regime: the inverted-tail
+   profit is concentrated in fold 2 (42 trades) and does not replicate; if a
+   regime-conditional recalibration ever fixes the tail, re-validate on a
+   fresh holdout before treating it as a signal.
 
 ## Appendix — Reproducing
 
@@ -283,6 +303,8 @@ Follow-ups (correctness/measurement fixes, not tuning):
   `p2_agent_ablation.json` (+ caches `p2_bars/series/models/evidence/sims/
   pairs/trades*.pkl`, log `p2_ablation_norm_console.log`).
 - Production-gate-semantics run: `p2_agent_ablation_prodgate.json`.
+- Contrarian control: `p2_contrarian.py` → `p2_contrarian.json`,
+  fold attribution in `p2_contrarian_folds.py` (temp).
 - Cross-checks: `prediction_only` and `always_long` rows reproduce the
   Phase-1 controls exactly; `pattern`/`regime`/`technical` coverage and the
   fold-0 regime absence are visible in the JSON `agent_report` and
