@@ -38,16 +38,29 @@ router = APIRouter(prefix="/api/v1", tags=["system"])
 _PROCESS_START = time.monotonic()
 
 
+def _market_status(settings: Settings) -> tuple[bool, str]:
+    """(is the exchange open now, human-readable session) from settings."""
+    hours = settings.market_hours
+    session = (
+        f"{hours.open_time.strftime('%H:%M')}-{hours.close_time.strftime('%H:%M')} "
+        f"{hours.timezone_name}"
+    )
+    return hours.is_open(), session
+
+
 @router.get("/health", response_model=HealthCheck, dependencies=[Depends(require_api_key)])
 async def health(
     container: Container = Depends(get_container),
     settings: Settings = Depends(get_settings),
 ) -> HealthCheck:
+    market_open, session = _market_status(settings)
     return HealthCheck(
         database="ok" if await container.database_healthy() else "down",
         cache="ok" if await container.cache_healthy() else "down",
         worker="ok" if await container.worker_healthy() else "down",
         mode=settings.qtrader_mode.value,
+        market_open=market_open,
+        market_hours=session,
     )
 
 
@@ -55,10 +68,13 @@ async def health(
 async def system_status(settings: Settings = Depends(get_settings)) -> SystemStatus:
     from qtrader.application.agents.registry import default_registry
 
+    market_open, session = _market_status(settings)
     return SystemStatus(
         mode=settings.qtrader_mode.value,
         live_enabled=settings.live_enabled,
         agents=default_registry().names,
+        market_open=market_open,
+        market_hours=session,
     )
 
 

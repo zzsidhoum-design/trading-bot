@@ -18,6 +18,7 @@ from qtrader.domain.entities import (
     BacktestRun,
     DecisionOutcome,
     DecisionRecord,
+    DiscoveredAsset,
     FundamentalData,
     IndicatorSnapshot,
     NewsItem,
@@ -30,8 +31,11 @@ from qtrader.domain.entities import (
     RiskAssessment,
     Signal,
     Stock,
+    SymbolChange,
     SystemLog,
     Trade,
+    TradingStatus,
+    UniverseMembership,
 )
 from qtrader.domain.events import DomainEvent
 from qtrader.domain.value_objects import (
@@ -175,6 +179,41 @@ class StockRepository(ABC):
     ) -> list[Stock]: ...
 
 
+class AssetDiscoveryProvider(ABC):
+    """Source of candidate symbols for the dynamic universe.
+
+    Adapters return raw candidates *before* any liquidity filtering; the
+    :class:`~qtrader.application.services.universe.UniverseEngine` applies
+    configurable filters/tiers and persists the result. Implementations should
+    fail loudly (raise) on provider errors so the engine can fall back to the
+    seeded universe.
+    """
+
+    @abstractmethod
+    async def discover_candidates(self, limit: int = 500) -> list[DiscoveredAsset]: ...
+
+
+class UniverseRepository(ABC):
+    """Persistence for dynamic-universe membership and symbol changes."""
+
+    @abstractmethod
+    async def list_memberships(
+        self, status: TradingStatus | None = None
+    ) -> list[UniverseMembership]: ...
+
+    @abstractmethod
+    async def get_membership(self, symbol: str) -> UniverseMembership | None: ...
+
+    @abstractmethod
+    async def upsert_membership(self, membership: UniverseMembership) -> UniverseMembership: ...
+
+    @abstractmethod
+    async def record_symbol_change(self, change: SymbolChange) -> SymbolChange: ...
+
+    @abstractmethod
+    async def list_symbol_changes(self) -> list[SymbolChange]: ...
+
+
 class PriceRepository(ABC):
     @abstractmethod
     async def upsert_bars(self, bars: list[PriceBar]) -> int: ...
@@ -191,6 +230,32 @@ class PriceRepository(ABC):
         end: datetime | None = None,
         limit: int = 500,
     ) -> list[PriceBar]: ...
+
+
+class DataQualityRepository(ABC):
+    """Read-only metrics over the persisted price universe (data audit).
+
+    Adapters return plain JSON-safe aggregates; the auditor service turns them
+    into pass/fail checks. Nothing here writes to the database.
+    """
+
+    @abstractmethod
+    async def price_audit(self, *, watchlist: list[str]) -> dict[str, Any]:
+        """Aggregate structural, coverage and freshness metrics over prices.
+
+        Expected keys:
+
+        * ``intervals`` — list of ``{interval, rows, symbols, first_ts, last_ts}``
+        * ``duplicates``, ``invalid_ohlc``, ``non_positive``, ``zero_volume``,
+          ``misaligned_intraday``, ``weekend_d1``, ``off_session_intraday``,
+          ``future_bars`` — integer row counts for each integrity rule
+        * ``freshness`` — list of ``{symbol, interval, last_ts, age_seconds}``
+          for the watchlist (daily + intraday)
+        * ``m5_per_day`` — list of ``{symbol, day, bars}`` for the watchlist
+        * ``d1_per_day`` — list of ``{symbol, day}`` for the watchlist
+        * ``d1_m5_diff`` — max absolute close difference (% of D1 close) between
+          daily and intraday closes on the latest sessions, or None
+        """
 
 
 class PortfolioRepository(ABC):

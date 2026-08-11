@@ -145,8 +145,8 @@ async def test_backfill_drops_invalid_bars() -> None:
 
 @pytest.mark.asyncio
 async def test_refresh_publishes_price_updated_and_caches_quote() -> None:
-    recent = datetime.now(UTC) - timedelta(minutes=1)
-    quote = _bar(recent, close="104")
+    recent = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(minutes=1)
+    quote = _bar(recent, interval=Interval.M1, close="104")
     agent, prices, cache, bus = _build(FakeMarketDataProvider(quote=quote))
     bar = await agent.refresh("AAPL")
     assert bar is not None

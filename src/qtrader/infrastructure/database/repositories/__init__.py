@@ -19,6 +19,7 @@ from qtrader.infrastructure.database.repositories.prediction import (
     SQLAlchemyPredictionRepository,
 )
 from qtrader.infrastructure.database.repositories.sqlalchemy import (
+    SQLAlchemyDataQualityRepository,
     SQLAlchemyPortfolioRepository,
     SQLAlchemyPriceRepository,
     SQLAlchemyStockRepository,
@@ -29,10 +30,12 @@ from qtrader.infrastructure.database.repositories.trading import (
     SQLAlchemyRiskRepository,
     SQLAlchemyTradeRepository,
 )
+from qtrader.infrastructure.database.repositories.universe import SQLAlchemyUniverseRepository
 
 __all__ = [
     "SQLAlchemyBacktestRepository",
     "SQLAlchemyDashboardRepository",
+    "SQLAlchemyDataQualityRepository",
     "SQLAlchemyDecisionRepository",
     "SQLAlchemyEventRepository",
     "SQLAlchemyFundamentalRepository",
@@ -50,4 +53,5 @@ __all__ = [
     "SQLAlchemyStockRepository",
     "SQLAlchemySystemLogRepository",
     "SQLAlchemyTradeRepository",
+    "SQLAlchemyUniverseRepository",
 ]

@@ -116,6 +116,32 @@ def _owned(symbols: list[str]) -> list[str]:
     return owned_symbols(symbols, settings.worker_shard_id, settings.worker_shards)
 
 
+async def _market_open(container: Any) -> bool:
+    """False while the exchange is closed; log the next open so operators can see why jobs idle.
+
+    Trading-cycle jobs (backfill, scan, execute) only make sense during a live
+    session: there is no new data, no new candidates and no orders to route while
+    the market is closed. Maintenance jobs (train/backtest/walk-forward) and the
+    heartbeat are deliberately not gated.
+    """
+    from qtrader.config.logging import get_logger
+
+    settings = container.resolve(Settings)
+    hours = settings.market_hours
+    now = datetime.now(UTC)
+    if hours.is_open(now):
+        return True
+    get_logger("qtrader.worker").info(
+        "market.closed",
+        next_open=hours.next_open(now).isoformat(),
+        session=(
+            f"{hours.open_time.strftime('%H:%M')}-{hours.close_time.strftime('%H:%M')} "
+            f"{hours.timezone_name}"
+        ),
+    )
+    return False
+
+
 async def _record_agent_metric(
     container: Any,
     *,
@@ -198,6 +224,88 @@ async def backfill(
     return f"backfilled {total} bars for {len(symbols)} symbols ({iv}+D1)"
 
 
+async def backfill_cycle(ctx: dict[str, Any]) -> str:
+    """Market-hours data refresh: keep the intraday window warm for the scanner.
+
+    Runs every 15 minutes while the exchange is open. The short lookback is
+    intentional — intraday bars only exist for recent sessions, and a small
+    payload keeps the provider request cheap on each tick.
+    """
+    container = _container(ctx)
+    if not await _market_open(container):
+        return "market closed — backfill skipped"
+    return await backfill(ctx, days=container.resolve(Settings).backfill_intraday_days)
+
+
+async def data_quality_cycle(ctx: dict[str, Any]) -> str:
+    """Periodic data-quality audit over the persisted price universe.
+
+    Never gated by market hours: the audit verifies structural integrity,
+    coverage and freshness of whatever the pipeline has persisted. Failing
+    checks are logged as warnings and the overall score is recorded as an
+    agent metric so the dashboard can trend it.
+    """
+    from qtrader.application.services.data_quality import DataQualityAuditor
+    from qtrader.config.logging import get_logger
+
+    container = _container(ctx)
+    settings = container.resolve(Settings)
+    auditor = container.resolve(DataQualityAuditor)
+    report = await auditor.audit(_owned(settings.watchlist_symbols))
+    logger = get_logger("qtrader.worker")
+    for check in report.checks:
+        record = logger.info if check.passed else logger.warning
+        record(
+            "data_quality.check",
+            check=check.name,
+            status=check.status,
+            detail=check.detail,
+        )
+    await _record_agent_metric(
+        container,
+        agent_name="data_quality",
+        metric_name="score",
+        value=Decimal(f"{report.score:.3f}"),
+    )
+    failed = [c.name for c in report.checks if not c.passed]
+    return (
+        f"data-quality {report.verdict} score={report.score:.2f} "
+        f"failed={failed or 'none'}"
+    )
+
+
+async def universe_cycle(ctx: dict[str, Any]) -> str:
+    """Phase 2: refresh the dynamic trading universe.
+
+    Runs discovery, applies the configurable liquidity/tier filters, persists
+    membership lifecycle (new listings / suspensions / delistings / renames)
+    and reports coverage. Never gated by market hours — discovery runs
+    off-hours so the next trading day sees an up-to-date universe. Newly added
+    members are daily-backfilled so their metrics stabilise.
+    """
+    from qtrader.application.services.universe import UniverseEngine
+
+    container = _container(ctx)
+    settings = container.resolve(Settings)
+    engine = container.resolve(UniverseEngine)
+    report = await engine.refresh()
+    for symbol in report.added:
+        await backfill(ctx, symbol=symbol, interval="1d", days=settings.backfill_days)
+    snapshot = await engine.snapshot()
+    await _record_agent_metric(
+        container,
+        agent_name="universe",
+        metric_name="tradable",
+        value=Decimal(snapshot["tradable"]),
+    )
+    return (
+        f"universe source={report.source} discovered={report.discovered} "
+        f"added={len(report.added)} suspended={len(report.suspended)} "
+        f"delisted={len(report.delisted)} resumed={len(report.resumed)} "
+        f"renames={len(report.symbol_changes)} tradable={snapshot['tradable']}"
+    )
+
+
 async def scan_cycle(ctx: dict[str, Any]) -> str:
     """Market Scanner pulse: recompute top-K rankings.
 
@@ -207,6 +315,8 @@ async def scan_cycle(ctx: dict[str, Any]) -> str:
     from qtrader.application.agents.scanner import MarketScanner
 
     container = _container(ctx)
+    if not await _market_open(container):
+        return "market closed — scan skipped"
     scanner = container.resolve(MarketScanner)
     top = await scanner.scan_all()
     await _record_agent_metric(
@@ -226,6 +336,8 @@ async def execute_cycle(ctx: dict[str, Any]) -> str:
     from qtrader.domain.value_objects import OrderStatus
 
     container = _container(ctx)
+    if not await _market_open(container):
+        return "market closed — execution skipped"
     portfolio = await container.resolve(PortfolioService).default_portfolio()
     pending = await container.resolve(OrderRepository).list_by_portfolio(
         portfolio.portfolio_id or 1, status=OrderStatus.PENDING.value, limit=50
@@ -365,6 +477,9 @@ class WorkerSettings:
     functions = [
         heartbeat,
         backfill,
+        backfill_cycle,
+        data_quality_cycle,
+        universe_cycle,
         scan_cycle,
         execute_cycle,
         train_cycle,
@@ -374,6 +489,14 @@ class WorkerSettings:
 
     cron_jobs = [
         cron(heartbeat, name="heartbeat", second=0),
+        cron(backfill_cycle, name="backfill_cycle", minute={0, 15, 30, 45}),
+        cron(data_quality_cycle, name="data_quality_cycle", minute={0, 30}),
+        cron(
+            universe_cycle,
+            name="universe_cycle",
+            hour={Settings().universe_refresh_hour},
+            minute=0,
+        ),
         cron(scan_cycle, name="scan_cycle", minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
         cron(execute_cycle, name="execute_cycle", minute={8, 23, 38, 53}),
         cron(train_cycle, name="train_cycle", hour={2}, minute=0),

@@ -263,6 +263,18 @@ async def test_health_reports_ok(client: httpx.AsyncClient) -> None:
     assert body["database"] == "ok"
     assert body["cache"] == "ok"
     assert body["worker"] == "ok"
+    assert isinstance(body["market_open"], bool)
+    assert "America/New_York" in body["market_hours"]
+
+
+@pytest.mark.asyncio
+async def test_system_status_reports_market_session(client: httpx.AsyncClient) -> None:
+    resp = await _get(client, "/api/v1/system/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mode"] == "backtest"
+    assert isinstance(body["market_open"], bool)
+    assert "09:30-16:00" in body["market_hours"]
 
 
 @pytest.mark.asyncio

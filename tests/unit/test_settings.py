@@ -43,3 +43,26 @@ class TestSettings:
             _env_file=None,
         )
         assert s.database_url == "postgresql+asyncpg://alice:secret@db.internal:5433/prod"
+
+    def test_universe_defaults(self) -> None:
+        s = Settings(_env_file=None)
+        assert s.universe_min_dollar_volume == 1_000_000.0
+        assert s.universe_tier_a_min_dollar_volume == 20_000_000.0
+        assert s.universe_tier_b_min_price == 5.0
+        assert s.universe_max_spread_pct == 2.0
+        assert s.universe_min_market_cap is None
+        assert s.universe_refresh_hour == 1
+        assert s.universe_seed_from_watchlist is True
+
+    def test_universe_settings_env_override(self) -> None:
+        s = Settings(
+            universe_min_dollar_volume=5_000_000.0,
+            universe_tier_a_min_dollar_volume=50_000_000.0,
+            universe_max_spread_pct=None,
+            universe_refresh_hour=4,
+            _env_file=None,
+        )
+        assert s.universe_min_dollar_volume == 5_000_000.0
+        assert s.universe_tier_a_min_dollar_volume == 50_000_000.0
+        assert s.universe_max_spread_pct is None
+        assert s.universe_refresh_hour == 4

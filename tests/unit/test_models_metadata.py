@@ -26,6 +26,8 @@ EXPECTED_TABLES = {
     "backtest_runs",
     "events",
     "system_logs",
+    "universe_memberships",
+    "universe_symbol_changes",
 }
 
 

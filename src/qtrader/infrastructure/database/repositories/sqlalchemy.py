@@ -6,15 +6,20 @@ transaction boundaries stay explicit and the UnitOfWork lives in the caller.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, select
+from sqlalchemy import CursorResult, bindparam, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from qtrader.domain.entities import Portfolio, Stock
-from qtrader.domain.ports import PortfolioRepository, PriceRepository, StockRepository
+from qtrader.domain.ports import (
+    DataQualityRepository,
+    PortfolioRepository,
+    PriceRepository,
+    StockRepository,
+)
 from qtrader.domain.value_objects import Interval, Money, PriceBar, TradingMode
 from qtrader.infrastructure.database.models import PortfolioModel, PriceModel, StockModel
 from qtrader.infrastructure.database.repositories.base import SessionBoundRepo
@@ -295,3 +300,183 @@ class SQLAlchemyPriceRepository(PriceRepository):
             close=row.close,
             volume=row.volume,
         )
+
+
+_ET = "America/New_York"
+_SESSION_WINDOW = "'09:30'::time <= (ts AT TIME ZONE 'America/New_York')::time"
+_SESSION_WINDOW += " AND (ts AT TIME ZONE 'America/New_York')::time <= '16:00'::time"
+
+
+class SQLAlchemyDataQualityRepository(DataQualityRepository):
+    """Read-only aggregates over the persisted price universe."""
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def price_audit(self, *, watchlist: list[str]) -> dict[str, Any]:
+        async with self._session_factory() as session:
+            result: dict[str, Any] = {}
+            result["intervals"] = [
+                {
+                    "interval": r.interval,
+                    "rows": r.rows,
+                    "symbols": r.symbols,
+                    "first_ts": r.first_ts,
+                    "last_ts": r.last_ts,
+                }
+                for r in await session.execute(
+                    text(
+                        "SELECT interval, COUNT(*) AS rows, COUNT(DISTINCT stock_id) AS symbols,"
+                        " MIN(ts) AS first_ts, MAX(ts) AS last_ts FROM prices"
+                        " GROUP BY interval ORDER BY interval"
+                    )
+                )
+            ]
+            result["duplicates"] = await self._count(
+                session,
+                "SELECT COUNT(*) FROM (SELECT 1 FROM prices GROUP BY stock_id, interval, ts"
+                " HAVING COUNT(*) > 1) d",
+            )
+            result["invalid_ohlc"] = await self._count(
+                session,
+                "SELECT COUNT(*) FROM prices WHERE high < low"
+                " OR high < LEAST(open, close) OR low > GREATEST(open, close)",
+            )
+            result["non_positive"] = await self._count(
+                session,
+                "SELECT COUNT(*) FROM prices"
+                " WHERE open <= 0 OR high <= 0 OR low <= 0 OR close <= 0",
+            )
+            result["zero_volume"] = await self._count(
+                session, "SELECT COUNT(*) FROM prices WHERE volume = 0"
+            )
+            result["misaligned_intraday"] = await self._count(
+                session,
+                "SELECT COUNT(*) FROM prices WHERE interval IN ('1m', '5m', '15m', '1h')"
+                " AND (EXTRACT(SECOND FROM ts) <> 0"
+                " OR (interval = '5m' AND EXTRACT(MINUTE FROM ts)::int % 5 <> 0)"
+                " OR (interval = '15m' AND EXTRACT(MINUTE FROM ts)::int % 15 <> 0)"
+                " OR (interval = '1h' AND EXTRACT(MINUTE FROM ts) <> 0))",
+            )
+            result["weekend_d1"] = await self._count(
+                session,
+                f"SELECT COUNT(*) FROM prices WHERE interval = '1d'"
+                f" AND EXTRACT(DOW FROM ts AT TIME ZONE '{_ET}') IN (0, 6)",
+            )
+            result["off_session_intraday"] = await self._count(
+                session,
+                f"SELECT COUNT(*) FROM prices WHERE interval <> '1d' AND NOT ({_SESSION_WINDOW})",
+            )
+            result["future_bars"] = await self._count(
+                session,
+                "SELECT COUNT(*) FROM prices WHERE ts > :cutoff",
+                {"cutoff": datetime.now(UTC) + timedelta(minutes=2)},
+            )
+
+            symbols = list(dict.fromkeys(s.upper() for s in watchlist))
+            if symbols:
+                result["freshness"] = [
+                    {
+                        "symbol": r.symbol,
+                        "interval": r.interval,
+                        "last_ts": r.last_ts,
+                        "age_seconds": (
+                            datetime.now(UTC) - _as_utc(r.last_ts)
+                        ).total_seconds(),
+                    }
+                    for r in await session.execute(
+                        text(
+                            "SELECT s.symbol, p.interval, MAX(p.ts) AS last_ts"
+                            " FROM prices p JOIN stocks s ON s.id = p.stock_id"
+                            " WHERE p.interval IN ('1d', '5m') AND s.symbol IN :symbols"
+                            " GROUP BY s.symbol, p.interval"
+                        ).bindparams(bindparam("symbols", expanding=True)),
+                        {"symbols": symbols},
+                    )
+                ]
+                m5_start = datetime.now(UTC) - timedelta(days=14)
+                result["m5_per_day"] = [
+                    {"symbol": r.symbol, "day": r.day, "bars": r.bars}
+                    for r in await session.execute(
+                        text(
+                            f"SELECT s.symbol,"
+                            f" (p.ts AT TIME ZONE '{_ET}')::date AS day, COUNT(*) AS bars"
+                            " FROM prices p JOIN stocks s ON s.id = p.stock_id"
+                            " WHERE p.interval = '5m' AND s.symbol IN :symbols"
+                            " AND p.ts >= :start GROUP BY s.symbol, day"
+                        ).bindparams(bindparam("symbols", expanding=True)),
+                        {"symbols": symbols, "start": m5_start},
+                    )
+                ]
+                result["d1_per_day"] = [
+                    {"symbol": r.symbol, "day": r.day}
+                    for r in await session.execute(
+                        text(
+                            f"SELECT s.symbol, (p.ts AT TIME ZONE '{_ET}')::date AS day"
+                            " FROM prices p JOIN stocks s ON s.id = p.stock_id"
+                            " WHERE p.interval = '1d' AND s.symbol IN :symbols"
+                            " AND p.ts >= :start GROUP BY s.symbol, day"
+                        ).bindparams(bindparam("symbols", expanding=True)),
+                        {
+                            "symbols": symbols,
+                            "start": datetime.now(UTC) - timedelta(days=60),
+                        },
+                    )
+                ]
+                result["d1_m5_diff"] = await self._d1_m5_diff(session, symbols)
+            else:
+                result["freshness"] = []
+                result["m5_per_day"] = []
+                result["d1_per_day"] = []
+                result["d1_m5_diff"] = None
+            return result
+
+    @staticmethod
+    async def _count(
+        session: AsyncSession, sql: str, params: dict[str, Any] | None = None
+    ) -> int:
+        row = await session.execute(text(sql), params or {})
+        return int(row.scalar_one())
+
+    @staticmethod
+    async def _d1_m5_diff(
+        session: AsyncSession, symbols: list[str]
+    ) -> dict[str, Any] | None:
+        row = (
+            await session.execute(
+                text(
+                    f"WITH d1 AS (SELECT p.stock_id, s.symbol,"
+                    f" (p.ts AT TIME ZONE '{_ET}')::date AS day, p.close AS close"
+                    " FROM prices p JOIN stocks s ON s.id = p.stock_id"
+                    " WHERE p.interval = '1d' AND s.symbol IN :symbols AND p.ts >= :start),"
+                    " m5 AS (SELECT DISTINCT ON (p.stock_id,"
+                    f" (p.ts AT TIME ZONE '{_ET}')::date)"
+                    f" p.stock_id, (p.ts AT TIME ZONE '{_ET}')::date AS day, p.close AS close"
+                    " FROM prices p WHERE p.interval = '5m' AND p.ts >= :start"
+                    f" ORDER BY p.stock_id, (p.ts AT TIME ZONE '{_ET}')::date, p.ts DESC)"
+                    " SELECT d1.symbol, d1.day, d1.close AS d1_close,"
+                    " m5.close AS m5_close,"
+                    " ABS(d1.close - m5.close) / NULLIF(d1.close, 0) * 100.0 AS diff_pct"
+                    " FROM d1 JOIN m5 ON m5.stock_id = d1.stock_id AND m5.day = d1.day"
+                    " WHERE d1.close > 0"
+                    " ORDER BY diff_pct DESC NULLS LAST LIMIT 1"
+                ).bindparams(bindparam("symbols", expanding=True)),
+                {
+                    "symbols": symbols,
+                    "start": datetime.now(UTC) - timedelta(days=15),
+                },
+            )
+        ).first()
+        if row is None:
+            return None
+        return {
+            "symbol": row.symbol,
+            "day": row.day,
+            "d1_close": float(row.d1_close),
+            "m5_close": float(row.m5_close),
+            "diff_pct": float(row.diff_pct) if row.diff_pct is not None else None,
+        }
+
+
+def _as_utc(ts: datetime) -> datetime:
+    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)

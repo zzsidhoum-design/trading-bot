@@ -17,6 +17,8 @@ class HealthCheck(BaseModel):
     broker: str = "not_configured"
     worker: str = "unknown"
     mode: str
+    market_open: bool = False
+    market_hours: str = ""
 
 
 class SystemStatus(BaseModel):
@@ -24,6 +26,8 @@ class SystemStatus(BaseModel):
     live_enabled: bool
     api_version: str = "v1"
     agents: list[str] = Field(default_factory=list)
+    market_open: bool = False
+    market_hours: str = ""
 
 
 class CircuitBreakerSnapshot(BaseModel):

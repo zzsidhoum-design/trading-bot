@@ -25,6 +25,10 @@ from qtrader.infrastructure.database.models.trading import (
     PositionModel,
     TradeModel,
 )
+from qtrader.infrastructure.database.models.universe import (
+    SymbolChangeModel,
+    UniverseMembershipModel,
+)
 
 __all__ = [
     "AgentMetricModel",
@@ -46,6 +50,8 @@ __all__ = [
     "SignalModel",
     "StockModel",
     "StrategyPerformanceModel",
+    "SymbolChangeModel",
     "SystemLogModel",
     "TradeModel",
+    "UniverseMembershipModel",
 ]

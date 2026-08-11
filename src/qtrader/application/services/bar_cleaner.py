@@ -17,6 +17,16 @@ from qtrader.domain.value_objects import Interval, PriceBar
 PRICE_ZERO = Decimal("0")
 VOLUME_ZERO = Decimal("0")
 
+# Intraday intervals snap to a fixed clock grid in the exchange's local time.
+# Completed bars from Yahoo always carry a :00 second and a minute aligned to
+# the interval step; anything else is an in-progress bar or a bad timestamp.
+_INTRADAY_GRID_MINUTES: dict[Interval, int] = {
+    Interval.M1: 1,
+    Interval.M5: 5,
+    Interval.M15: 15,
+    Interval.H1: 60,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class CleaningReport:
@@ -41,10 +51,14 @@ class BarCleaner:
         max_lateness_seconds: int = 600,
         max_future_seconds: int = 60,
         max_volume_spike_factor: Decimal = Decimal("100"),
+        reject_zero_volume: bool = True,
+        align_intraday: bool = True,
     ) -> None:
         self._max_lateness = timedelta(seconds=max_lateness_seconds)
         self._max_future = timedelta(seconds=max_future_seconds)
         self._max_volume_spike = max_volume_spike_factor
+        self._reject_zero_volume = reject_zero_volume
+        self._align_intraday = align_intraday
 
     def clean(
         self,
@@ -84,8 +98,9 @@ class BarCleaner:
             )
 
         # 2) range checks. PriceBar construction already rejects negative /
-        #    malformed OHLC; here we catch what slips past it: zero prices and
-        #    NaN / negative volume.
+        #    malformed OHLC; here we catch what slips past it: zero prices,
+        #    zero / NaN / negative volume, and intraday bars whose timestamp is
+        #    off the interval grid (in-progress or junk bars).
         valid: list[PriceBar] = []
         for bar in seen.values():
             if (
@@ -98,6 +113,12 @@ class BarCleaner:
                 continue
             if bar.volume != bar.volume or bar.volume < VOLUME_ZERO:
                 _drop("invalid-volume")
+                continue
+            if self._reject_zero_volume and bar.volume == VOLUME_ZERO:
+                _drop("zero-volume")
+                continue
+            if self._align_intraday and not self._on_grid(bar.ts, bar.interval):
+                _drop("misaligned-timestamp")
                 continue
             valid.append(bar)
         del seen
@@ -130,3 +151,20 @@ class BarCleaner:
 
         valid.sort(key=lambda b: b.ts)
         return CleaningReport(kept=valid, dropped=sum(reasons.values()), reasons=reasons)
+
+    @staticmethod
+    def _on_grid(ts: datetime, interval: Interval) -> bool:
+        """Whether an intraday timestamp falls on the interval's clock grid.
+
+        Grid alignment is timezone-invariant for US-equity offsets (whole
+        hours from UTC), so the UTC timestamp is a faithful proxy for the
+        exchange-local wall clock. Daily bars are exempt.
+        """
+        step = _INTRADAY_GRID_MINUTES.get(interval)
+        if step is None:
+            return True
+        if ts.second != 0:
+            return False
+        if step >= 60:
+            return ts.minute == 0
+        return ts.minute % step == 0

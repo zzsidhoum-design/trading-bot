@@ -33,6 +33,7 @@ from qtrader.application.services.backtest import BacktestRunner
 from qtrader.application.services.bar_cleaner import BarCleaner
 from qtrader.application.services.bar_validator import BarValidator
 from qtrader.application.services.dashboard_service import DashboardService
+from qtrader.application.services.data_quality import DataQualityAuditor
 from qtrader.application.services.decision_strategy import EnsembleDecisionStrategy
 from qtrader.application.services.feature_store import FeatureStore
 from qtrader.application.services.indicators import IndicatorEngine
@@ -40,7 +41,8 @@ from qtrader.application.services.model_trainer import ModelTrainer
 from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskPolicy
 from qtrader.application.services.system_gate import GateThresholds, SystemGate
-from qtrader.application.services.walk_forward import WalkForwardValidator
+from qtrader.application.services.universe import UniverseEngine, UniverseThresholds
+from qtrader.application.services.walk_forward import STRATEGY_LABEL, WalkForwardValidator
 from qtrader.application.use_cases.manual_order import ManualOrder
 from qtrader.config.logging import configure_logging
 from qtrader.config.settings import Settings
@@ -54,10 +56,12 @@ from qtrader.domain.events import (
 from qtrader.domain.ports import (
     AgentMetricRepository,
     AllocationPolicy,
+    AssetDiscoveryProvider,
     BacktestRepository,
     BrokerGateway,
     Cache,
     DashboardQueries,
+    DataQualityRepository,
     DecisionRepository,
     DecisionStrategy,
     EventBus,
@@ -83,15 +87,18 @@ from qtrader.domain.ports import (
     SystemLogRepository,
     TradeRepository,
     UnitOfWorkFactory,
+    UniverseRepository,
 )
 from qtrader.domain.value_objects import Money, TradingMode
 from qtrader.infrastructure.brokers import AlpacaBroker, PaperBroker
 from qtrader.infrastructure.cache import RedisCache, RedisLock
+from qtrader.infrastructure.data_providers.discovery import YahooAssetDiscoveryProvider
 from qtrader.infrastructure.data_providers.fundamental import EdgarFundamentalProvider
 from qtrader.infrastructure.data_providers.yahoo import YahooFinanceProvider
 from qtrader.infrastructure.database.repositories import (
     SQLAlchemyBacktestRepository,
     SQLAlchemyDashboardRepository,
+    SQLAlchemyDataQualityRepository,
     SQLAlchemyDecisionRepository,
     SQLAlchemyEventRepository,
     SQLAlchemyFundamentalRepository,
@@ -109,6 +116,7 @@ from qtrader.infrastructure.database.repositories import (
     SQLAlchemyStockRepository,
     SQLAlchemySystemLogRepository,
     SQLAlchemyTradeRepository,
+    SQLAlchemyUniverseRepository,
 )
 from qtrader.infrastructure.database.session import build_engine, build_session_factory
 from qtrader.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWorkFactory
@@ -142,6 +150,7 @@ class Container:
         self._provider: MarketDataProvider | None = None
         self._news_provider: NewsProvider | None = None
         self._broker: BrokerGateway | None = None
+        self._discovery_provider: AssetDiscoveryProvider | None = None
         self._breakers = CircuitBreakerRegistry()
         # Configure logging once at container creation
         configure_logging(self._settings)
@@ -176,6 +185,7 @@ class Container:
         c.register(RiskRepository, instance=SQLAlchemyRiskRepository(session_factory))
         c.register(TradeRepository, instance=SQLAlchemyTradeRepository(session_factory))
         c.register(PriceRepository, instance=SQLAlchemyPriceRepository(session_factory))
+        c.register(UniverseRepository, instance=SQLAlchemyUniverseRepository(session_factory))
         c.register(SignalRepository, instance=SQLAlchemySignalRepository(session_factory))
         c.register(IndicatorRepository, instance=SQLAlchemyIndicatorRepository(session_factory))
         c.register(NewsRepository, instance=SQLAlchemyNewsRepository(session_factory))
@@ -224,6 +234,16 @@ class Container:
         )
         c.register(BarValidator, instance=validator)
 
+        quality_repo = SQLAlchemyDataQualityRepository(session_factory)
+        c.register(DataQualityRepository, instance=quality_repo)
+        c.register(
+            DataQualityAuditor,
+            instance=DataQualityAuditor(
+                quality_repo,
+                self._settings.market_hours,
+            ),
+        )
+
         provider = self._adapt(
             MarketDataProvider,
             lambda: YahooFinanceProvider(
@@ -236,6 +256,30 @@ class Container:
         )
         self._provider = provider
         c.register(MarketDataProvider, instance=provider)
+
+        discovery_provider = self._adapt(
+            AssetDiscoveryProvider,
+            lambda: YahooAssetDiscoveryProvider(
+                circuit=self._breakers.get_or_create(
+                    "yahoo_screener",
+                    failure_threshold=self._settings.provider_failure_threshold,
+                    reset_timeout_seconds=self._settings.provider_reset_timeout_seconds,
+                )
+            ),
+        )
+        self._discovery_provider = discovery_provider
+        c.register(AssetDiscoveryProvider, instance=discovery_provider)
+
+        c.register(
+            UniverseEngine,
+            instance=UniverseEngine(
+                discovery=c.resolve(AssetDiscoveryProvider),
+                universe_repo=c.resolve(UniverseRepository),
+                prices=c.resolve(PriceRepository),
+                stocks=c.resolve(StockRepository),
+                thresholds=UniverseThresholds.from_settings(self._settings),
+            ),
+        )
 
         bus = c.resolve(EventBus)
         data_agent = DataAgent(
@@ -377,6 +421,7 @@ class Container:
             ),
             performance=c.resolve(PerformanceRepository),
             logs=c.resolve(SystemLogRepository),
+            oos_strategy=self._settings.gate_oos_strategy or STRATEGY_LABEL,
         )
         c.register(SystemGate, instance=system_gate)
 
@@ -540,6 +585,7 @@ class Container:
             ("provider", self._provider),
             ("news_provider", self._news_provider),
             ("broker", self._broker),
+            ("discovery_provider", self._discovery_provider),
         ):
             close = getattr(maybe, "close", None)
             if close is not None:

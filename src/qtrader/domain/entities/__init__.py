@@ -1,4 +1,4 @@
-﻿"""Domain entities — pure business objects with no ORM/IO knowledge.
+"""Domain entities — pure business objects with no ORM/IO knowledge.
 
 Repositories (infrastructure) are responsible for mapping these to/from
 persistence; entities never import SQLAlchemy.
@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from qtrader.domain.value_objects import (
     Decision,
@@ -21,6 +22,100 @@ from qtrader.domain.value_objects import (
     TradeSide,
     TradingMode,
 )
+
+
+class AssetType(StrEnum):
+    """Broad instrument classification from the discovery source."""
+
+    COMMON_STOCK = "common_stock"
+    ETF = "etf"
+    ADR = "adr"
+    REIT = "reit"
+    PREFERRED_STOCK = "preferred_stock"
+    CLOSED_END_FUND = "closed_end_fund"
+    OTHER = "other"
+
+
+class TradingStatus(StrEnum):
+    """Membership lifecycle state in the dynamic universe."""
+
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    DELISTED = "delisted"
+
+
+class UniverseTier(StrEnum):
+    """Liquidity/large-cap tiers: strict supersets (A >= B >= C)."""
+
+    A = "A"
+    B = "B"
+    C = "C"
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveredAsset:
+    """A candidate found by the discovery provider (pre-liquidity filter)."""
+
+    symbol: str
+    name: str | None = None
+    exchange: str | None = None
+    asset_type: AssetType = AssetType.COMMON_STOCK
+    currency: str = "USD"
+    market_cap: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LiquidityMetrics:
+    """Rolling liquidity / tradability snapshot for one symbol.
+
+    ``avg_dollar_volume``, ``avg_volume`` and ``last_price`` are computed from
+    daily bars over the configured liquidity window; ``mean_spread_pct`` comes
+    from intraday bars when available (``None`` disables the spread check).
+    """
+
+    symbol: str
+    last_price: float
+    avg_dollar_volume: float
+    avg_volume: float
+    mean_spread_pct: float | None = None
+    market_cap: float | None = None
+    trading_days: int = 0
+    first_bar: datetime | None = None
+    last_bar: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UniverseMembership:
+    """Persisted membership of one symbol in the dynamic universe.
+
+    ``added_at`` is the listing date (first confirmed price bar) and
+    ``removed_at`` the delisting/suspension date — together they drive the
+    point-in-time reconstruction so historical backtests never trade a symbol
+    before it listed or after it left.
+    """
+
+    symbol: str
+    status: TradingStatus = TradingStatus.ACTIVE
+    tier: UniverseTier | None = None
+    added_at: date | None = None
+    removed_at: date | None = None
+    last_traded_at: datetime | None = None
+    asset_type: AssetType = AssetType.COMMON_STOCK
+    name: str | None = None
+    reason: str | None = None
+    metadata: dict = field(default_factory=dict)
+    membership_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolChange:
+    """A recorded ticker rename (old -> new), for symbol-change history."""
+
+    old_symbol: str
+    new_symbol: str
+    effective_at: date | None = None
+    reason: str | None = None
+    change_id: int | None = None
 
 
 def _now() -> datetime:

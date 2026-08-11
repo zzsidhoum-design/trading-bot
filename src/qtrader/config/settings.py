@@ -52,6 +52,7 @@ class MarketDataSettingsMixin(BaseSettings):
     watchlist: str = "AAPL,MSFT,TSLA"
     data_provider: str = "yahoo"
     backfill_days: int = 30
+    backfill_intraday_days: int = 5
     quote_cache_ttl_seconds: int = 300
     data_max_single_bar_move_pct: float = 0.5
     data_reject_large_moves: bool = True
@@ -71,6 +72,34 @@ class MarketDataSettingsMixin(BaseSettings):
     def scan_interval(self) -> Interval:
         """Default intraday interval used by the Market Scanner."""
         return Interval.M5
+
+
+class UniverseSettingsMixin(BaseSettings):
+    """Phase 2 — dynamic trading universe engine.
+
+    Every threshold is env-configurable and each value feeds a pure
+    classification/selection function so the logic is unit-testable. Tiers are
+    strict supersets: ``C`` passes the base liquidity floor, ``B`` is a stricter
+    mid tier, ``A`` is the most liquid/large tier. ``None``-able thresholds
+    disable that check (e.g. no market-cap floor when the provider has no data).
+    """
+
+    universe_refresh_hour: int = 1
+    universe_max_candidates: int = 500
+    universe_seed_from_watchlist: bool = True
+    universe_liquidity_window_days: int = 21
+    universe_min_trading_days: int = 30
+    universe_min_price: float = 2.0
+    universe_min_dollar_volume: float = 1_000_000.0
+    universe_min_avg_volume: float = 200_000.0
+    universe_max_spread_pct: float | None = 2.0
+    universe_min_market_cap: float | None = None
+    universe_tier_a_min_dollar_volume: float = 20_000_000.0
+    universe_tier_a_min_price: float = 10.0
+    universe_tier_b_min_dollar_volume: float = 5_000_000.0
+    universe_tier_b_min_price: float = 5.0
+    universe_stale_suspend_days: int = 15
+    universe_stale_delist_days: int = 60
 
 
 class AnalysisSettingsMixin(BaseSettings):
@@ -150,6 +179,7 @@ class BacktestSettingsMixin(BaseSettings):
     backtest_slippage_bps: float = 0.0
     backtest_warmup_bars: int = 30
     gate_strategy: str = "ensemble"
+    gate_oos_strategy: str = ""
     gate_min_trades: int = 30
     gate_min_win_rate: float | None = None
     gate_min_profit_factor: float = 1.2
@@ -162,6 +192,35 @@ class BacktestSettingsMixin(BaseSettings):
     walk_forward_horizon_bars: int = 12
     walk_forward_prob_buy: float = 0.52
     walk_forward_prob_sell: float = 0.48
+
+
+class MarketSettingsMixin(BaseSettings):
+    """Trading-session calendar — the pipeline only trades when the exchange is open."""
+
+    market_timezone: str = "America/New_York"
+    market_open: str = "09:30"
+    market_close: str = "16:00"
+    market_holidays: str = ""
+    market_always_open: bool = False
+
+    @property
+    def market_hours(self) -> Any:
+        """A :class:`~qtrader.application.services.market_hours.MarketHours`.
+
+        Extra ``market_holidays`` (comma-separated ``YYYY-MM-DD``) are added to
+        the curated NYSE/NASDAQ calendar. ``market_always_open`` disables the
+        calendar entirely (backtests, CI).
+        """
+        from qtrader.application.services.market_hours import MarketHours
+
+        extras = [d.strip() for d in self.market_holidays.split(",") if d.strip()]
+        return MarketHours(
+            timezone=self.market_timezone,
+            open_time=self.market_open,
+            close_time=self.market_close,
+            holidays=extras,
+            always_open=self.market_always_open,
+        )
 
 
 class WorkerSettingsMixin(BaseSettings):
@@ -185,10 +244,12 @@ class Settings(
     DatabaseSettingsMixin,
     ApiSettingsMixin,
     MarketDataSettingsMixin,
+    UniverseSettingsMixin,
     AnalysisSettingsMixin,
     PredictionSettingsMixin,
     TradingSettingsMixin,
     BacktestSettingsMixin,
+    MarketSettingsMixin,
     WorkerSettingsMixin,
     BaseSettings,
 ):
