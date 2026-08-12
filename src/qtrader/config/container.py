@@ -28,6 +28,13 @@ from qtrader.application.agents.prediction import PredictionAgent
 from qtrader.application.agents.risk import RiskAgent
 from qtrader.application.agents.scanner import MarketScanner
 from qtrader.application.agents.technical import TechnicalAgent
+from qtrader.application.research import (
+    BacktestAdapter,
+    IndicatorAdapter,
+    MarketDataAdapter,
+    PortfolioAdapter,
+    PredictionAdapter,
+)
 from qtrader.application.services.allocation_policy import EqualWeightAllocation
 from qtrader.application.services.backtest import BacktestRunner
 from qtrader.application.services.bar_cleaner import BarCleaner
@@ -40,6 +47,7 @@ from qtrader.application.services.indicators import IndicatorEngine
 from qtrader.application.services.model_trainer import ModelTrainer
 from qtrader.application.services.multitimeframe import MultitimeframeResearchEngine
 from qtrader.application.services.portfolio_service import PortfolioService
+from qtrader.application.services.prediction_model import HeuristicModel
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskPolicy
 from qtrader.application.services.system_gate import GateThresholds, SystemGate
 from qtrader.application.services.universe import UniverseEngine, UniverseThresholds
@@ -459,6 +467,32 @@ class Container:
                 universe=c.resolve(UniverseRepository),
                 settings=self._settings.research_settings,
             ),
+        )
+
+        indicator_engine = IndicatorEngine()
+        c.register(
+            IndicatorAdapter,
+            instance=IndicatorAdapter(engine=indicator_engine),
+        )
+        c.register(
+            MarketDataAdapter,
+            instance=MarketDataAdapter(prices=c.resolve(PriceRepository)),
+        )
+        c.register(
+            BacktestAdapter,
+            instance=BacktestAdapter(runner=c.resolve(BacktestRunner)),
+        )
+        c.register(
+            PortfolioAdapter,
+            instance=PortfolioAdapter(
+                service=portfolio_service,
+                positions_repo=c.resolve(PositionRepository),
+                portfolios_repo=c.resolve(PortfolioRepository),
+            ),
+        )
+        c.register(
+            PredictionAdapter,
+            instance=PredictionAdapter(model=HeuristicModel()),
         )
 
         c.register(

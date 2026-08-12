@@ -232,7 +232,7 @@ async def test_refresh_suspends_stale_member() -> None:
     report = await engine.refresh()
     assert report.suspended == ["STALE"]
     assert repo._memberships["STALE"].status is TradingStatus.SUSPENDED
-    assert repo._memberships["STALE"].removed_at == date(2026, 8, 11)
+    assert repo._memberships["STALE"].removed_at == datetime.now(UTC).date()
 
 
 async def test_refresh_resumes_suspended_member_with_fresh_data() -> None:

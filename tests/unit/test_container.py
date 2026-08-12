@@ -1,5 +1,12 @@
 from qtrader.application.agents.chief import ChiefAgent
 from qtrader.application.agents.prediction import PredictionAgent
+from qtrader.application.research import (
+    BacktestAdapter,
+    IndicatorAdapter,
+    MarketDataAdapter,
+    PortfolioAdapter,
+    PredictionAdapter,
+)
 from qtrader.application.services.decision_strategy import EnsembleDecisionStrategy
 from qtrader.application.services.feature_store import FeatureStore
 from qtrader.application.services.model_trainer import ModelTrainer
@@ -42,6 +49,11 @@ def test_container_resolves_every_registered_port() -> None:
         assert isinstance(
             container.resolve(DecisionStrategy), EnsembleDecisionStrategy
         )
+        assert isinstance(container.resolve(IndicatorAdapter), IndicatorAdapter)
+        assert isinstance(container.resolve(MarketDataAdapter), MarketDataAdapter)
+        assert isinstance(container.resolve(BacktestAdapter), BacktestAdapter)
+        assert isinstance(container.resolve(PortfolioAdapter), PortfolioAdapter)
+        assert isinstance(container.resolve(PredictionAdapter), PredictionAdapter)
     finally:
         import asyncio
 

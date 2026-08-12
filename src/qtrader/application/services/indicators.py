@@ -236,6 +236,41 @@ class VolumeProfile(Indicator):
         return row
 
 
+INDICATOR_REGISTRY: dict[str, type[Indicator]] = {
+    "sma": SimpleMovingAverage,
+    "ema": ExponentialMovingAverage,
+    "rsi": RSI,
+    "macd": MACD,
+    "atr": ATR,
+    "adx": ADX,
+    "bollinger": BollingerBands,
+    "vwap": VWAP,
+    "stochastic": Stochastic,
+    "ichimoku": Ichimoku,
+    "volume_profile": VolumeProfile,
+}
+
+
+def indicator_names() -> list[str]:
+    """Names accepted by :func:`indicator_factory` (sorted)."""
+    return sorted(INDICATOR_REGISTRY)
+
+
+def indicator_factory(name: str, **params: Any) -> Indicator:
+    """Build an indicator by registry name.
+
+    The single entry point for constructing indicators by name; consumers
+    never import pandas or a third-party TA library at call sites. Unknown
+    names raise ``ValueError`` listing the supported registry.
+    """
+    cls = INDICATOR_REGISTRY.get(name.strip().lower())
+    if cls is None:
+        raise ValueError(
+            f"unknown indicator {name!r}; supported: {', '.join(indicator_names())}"
+        )
+    return cls(**params)
+
+
 class IndicatorEngine:
     """Composes indicators and emits the latest IndicatorSnapshot."""
 
