@@ -24,7 +24,9 @@ _INTRADAY_GRID_MINUTES: dict[Interval, int] = {
     Interval.M1: 1,
     Interval.M5: 5,
     Interval.M15: 15,
+    Interval.M30: 30,
     Interval.H1: 60,
+    Interval.H4: 240,
 }
 
 

@@ -15,7 +15,12 @@ import httpx
 
 from qtrader.config.logging import get_logger
 from qtrader.domain.ports import MarketDataProvider
-from qtrader.domain.value_objects import Interval, PriceBar
+from qtrader.domain.value_objects import (
+    DERIVED_INTERVALS,
+    Interval,
+    PriceBar,
+    derived_source,
+)
 from qtrader.infrastructure.resilience import (
     CircuitBreaker,
     CircuitOpenError,
@@ -159,6 +164,13 @@ class YahooFinanceProvider(MarketDataProvider):
     async def _chart(
         self, symbol: str, *, interval: Interval, params: dict[str, Any]
     ) -> list[PriceBar]:
+        if interval in DERIVED_INTERVALS:
+            source = derived_source(interval)
+            source_label = source.value if source is not None else "n/a"
+            raise ValueError(
+                f"yahoo cannot fetch derived interval {interval.value!r}; "
+                f"derive it via resampling ({source_label})"
+            )
         params = {"interval": interval.value, **params}
         try:
             response = await self._circuit.call(

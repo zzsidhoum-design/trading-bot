@@ -38,6 +38,7 @@ from qtrader.application.services.decision_strategy import EnsembleDecisionStrat
 from qtrader.application.services.feature_store import FeatureStore
 from qtrader.application.services.indicators import IndicatorEngine
 from qtrader.application.services.model_trainer import ModelTrainer
+from qtrader.application.services.multitimeframe import MultitimeframeResearchEngine
 from qtrader.application.services.portfolio_service import PortfolioService
 from qtrader.application.services.risk_calculator import RiskCalculator, RiskPolicy
 from qtrader.application.services.system_gate import GateThresholds, SystemGate
@@ -449,6 +450,16 @@ class Container:
             prob_sell=self._settings.walk_forward_prob_sell,
         )
         c.register(WalkForwardValidator, instance=walk_forward_validator)
+
+        c.register(
+            MultitimeframeResearchEngine,
+            instance=MultitimeframeResearchEngine(
+                prices=c.resolve(PriceRepository),
+                stocks=c.resolve(StockRepository),
+                universe=c.resolve(UniverseRepository),
+                settings=self._settings.research_settings,
+            ),
+        )
 
         c.register(
             DashboardService,

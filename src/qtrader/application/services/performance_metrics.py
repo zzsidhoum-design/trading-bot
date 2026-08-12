@@ -17,7 +17,15 @@ from qtrader.domain.value_objects import Interval, TradingMode
 _ZERO = Decimal("0")
 _ONE_HUNDRED = Decimal("100")
 
-_ANNUALIZATION_FACTORS = {"1d": 252.0, "5m": 252.0 * 78.0 / 390.0, "1h": 252.0 * 6.5}
+_ANNUALIZATION_FACTORS = {
+    "1d": 252.0,
+    "5m": 252.0 * 78.0 / 390.0,
+    "1h": 252.0 * 6.5,
+    "1m": 252.0 * 390.0,
+    "15m": 252.0 * 26.0,
+    "30m": 252.0 * 13.0,
+    "4h": 252.0 * 1.625,
+}
 
 
 def _pct(values: Sequence[Decimal]) -> list[float]:

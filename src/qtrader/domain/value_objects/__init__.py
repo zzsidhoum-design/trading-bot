@@ -42,8 +42,38 @@ class Interval(StrEnum):
     M1 = "1m"
     M5 = "5m"
     M15 = "15m"
+    M30 = "30m"
     H1 = "1h"
+    H4 = "4h"
     D1 = "1d"
+
+
+# Bar lengths in clock minutes. Intraday bars-per-day (US session 09:30-16:00
+# ET = 390 minutes): M1=390, M5=78, M15=26, M30=13, H1=6.5, H4=1.625, D1=1.
+INTERVAL_MINUTES: dict[Interval, int] = {
+    Interval.M1: 1,
+    Interval.M5: 5,
+    Interval.M15: 15,
+    Interval.M30: 30,
+    Interval.H1: 60,
+    Interval.H4: 240,
+    Interval.D1: 1440,
+}
+
+# Intervals the price provider cannot deliver natively; the research engine
+# derives them by resampling a finer interval (Yahoo has no 4h endpoint).
+DERIVED_INTERVALS: frozenset[Interval] = frozenset({Interval.H4})
+DERIVED_INTERVAL_SOURCE: dict[Interval, Interval] = {Interval.H4: Interval.H1}
+
+
+def interval_minutes(interval: Interval) -> int:
+    """Clock length of one bar in minutes (D1 = 1440)."""
+    return INTERVAL_MINUTES[interval]
+
+
+def derived_source(interval: Interval) -> Interval | None:
+    """The finer interval used to derive ``interval``, or None if native."""
+    return DERIVED_INTERVAL_SOURCE.get(interval)
 
 
 class TradeSide(StrEnum):

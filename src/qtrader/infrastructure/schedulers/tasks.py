@@ -473,6 +473,44 @@ async def walk_forward_cycle(ctx: dict[str, Any]) -> str:
     )
 
 
+async def research_cycle(ctx: dict[str, Any]) -> str:
+    """Phase 3: multi-timeframe research — which timeframes/combos are useful.
+
+    Explicitly research-only (no strategies are built or traded). Runs the pure
+    study engine over the resolved universe and logs the ranked recommendations,
+    best roles and any data limitations. Never gated by market hours: research
+    consumes whatever history is persisted and is meant to run off-hours.
+    """
+    from qtrader.application.services.multitimeframe import (
+        MultitimeframeResearchEngine,
+    )
+    from qtrader.config.logging import get_logger
+
+    container = _container(ctx)
+    settings = container.resolve(Settings)
+    logger = get_logger("qtrader.worker")
+    report = await container.resolve(MultitimeframeResearchEngine).run()
+    logger.info(
+        "research.report",
+        symbols=len(report.symbols),
+        timeframe_studies=len(report.timeframe_studies),
+        combinations=len(report.combinations),
+        recommendations=len(report.recommendations),
+        best_context=report.best_context.value,
+        best_setup=report.best_setup.value,
+        best_entry=report.best_entry.value,
+        lookback_days=settings.research_lookback_days,
+        limitations=report.limitations,
+    )
+    top = report.recommendations[:3]
+    top_label = ", ".join(f"{r.combo.key}@o={r.oos_sharpe:.2f}" for r in top) or "none"
+    return (
+        f"research: {len(report.combinations)} combos, "
+        f"best={report.best_context.value}/{report.best_setup.value}/"
+        f"{report.best_entry.value}, top=[{top_label}]"
+    )
+
+
 class WorkerSettings:
     functions = [
         heartbeat,
@@ -485,6 +523,7 @@ class WorkerSettings:
         train_cycle,
         backtest_cycle,
         walk_forward_cycle,
+        research_cycle,
     ]
 
     cron_jobs = [
@@ -502,6 +541,7 @@ class WorkerSettings:
         cron(train_cycle, name="train_cycle", hour={2}, minute=0),
         cron(backtest_cycle, name="backtest_cycle", hour={3}, minute=0),
         cron(walk_forward_cycle, name="walk_forward_cycle", hour={3}, minute=5),
+        cron(research_cycle, name="research_cycle", hour={3}, minute=15),
     ]
 
     redis_settings = RedisSettings.from_dsn(Settings().redis_url)

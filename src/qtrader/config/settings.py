@@ -240,6 +240,67 @@ class WorkerSettingsMixin(BaseSettings):
         return value
 
 
+class ResearchSettingsMixin(BaseSettings):
+    """Phase 3 — multi-timeframe research engine (no strategies, research only)."""
+
+    research_lookback_days: int = 730
+    research_min_train_bars: int = 100
+    research_min_coverage_pct: float = 0.9
+    research_combination_mode: str = "all"
+    research_max_symbols: int = 20
+    research_n_folds: int = 4
+    research_signal_mode: str = "trend"
+    research_signal_fast: int = 9
+    research_signal_slow: int = 21
+    research_signal_band: float = 0.0
+    research_commission_bps: float = 10.0
+    research_slippage_bps: float = 50.0
+    research_max_hold_bars: int = 0
+    research_intervals: str = ""
+
+    @property
+    def research_settings(self) -> Any:
+        """A :class:`~qtrader.application.services.multitimeframe.ResearchSettings`."""
+        from qtrader.application.services.multitimeframe import (
+            ResearchSettings,
+            SignalParams,
+            SimParams,
+        )
+
+        def _parse_interval(token: str) -> Interval:
+            """Accept either the enum name (``D1``) or its value (``1d``)."""
+            t = token.strip().upper()
+            for iv in Interval:
+                if iv.name == t or iv.value.upper() == t:
+                    return iv
+            raise ValueError(f"unknown research interval {token!r}")
+
+        intervals: tuple[Interval, ...] | None = None
+        if self.research_intervals.strip():
+            parts = [p for p in self.research_intervals.split(",") if p.strip()]
+            intervals = tuple(_parse_interval(p) for p in parts)
+        return ResearchSettings(
+            intervals=intervals or ResearchSettings().intervals,
+            lookback_days=self.research_lookback_days,
+            signal=SignalParams(
+                mode=self.research_signal_mode,
+                fast=self.research_signal_fast,
+                slow=self.research_signal_slow,
+                band=self.research_signal_band,
+            ),
+            sim=SimParams(
+                commission_bps=self.research_commission_bps,
+                slippage_bps=self.research_slippage_bps,
+                max_hold_bars=self.research_max_hold_bars,
+            ),
+            n_folds=self.research_n_folds,
+            min_train_bars=self.research_min_train_bars,
+            min_coverage_pct=self.research_min_coverage_pct,
+            combination_mode=self.research_combination_mode,
+            max_symbols=self.research_max_symbols,
+        )
+
+
 class Settings(
     DatabaseSettingsMixin,
     ApiSettingsMixin,
@@ -251,6 +312,7 @@ class Settings(
     BacktestSettingsMixin,
     MarketSettingsMixin,
     WorkerSettingsMixin,
+    ResearchSettingsMixin,
     BaseSettings,
 ):
     model_config = SettingsConfigDict(
