@@ -63,6 +63,7 @@ class WalkForwardValidator:
         prob_buy: float = 0.52,
         prob_sell: float = 0.48,
         sectors: dict[str, str] | None = None,
+        strategy_label: str = STRATEGY_LABEL,
     ) -> None:
         self._prices = prices
         self._performance = performance
@@ -76,6 +77,7 @@ class WalkForwardValidator:
         self._prob_buy = prob_buy
         self._prob_sell = prob_sell
         self._sectors = sectors
+        self._strategy_label = strategy_label
 
     async def validate(
         self,
@@ -138,7 +140,7 @@ class WalkForwardValidator:
             return None
 
         aggregate = PerformanceMetrics.from_series(
-            strategy=STRATEGY_LABEL,
+            strategy=self._strategy_label,
             mode=TradingMode.BACKTEST,
             period_start=start,
             period_end=end,

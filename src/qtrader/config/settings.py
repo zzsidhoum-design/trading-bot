@@ -301,6 +301,61 @@ class ResearchSettingsMixin(BaseSettings):
         )
 
 
+class StrategyResearchSettingsMixin(BaseSettings):
+    """Phase 2 — automated strategy research engine (research only, no trading)."""
+
+    strategy_research_max_strategies: int = 60
+    strategy_research_computational_budget: int = 60
+    strategy_research_max_indicators: int = 5
+    strategy_research_max_conditions: int = 3
+    strategy_research_intervals: str = ""
+    strategy_research_commission_bps: float = 10.0
+    strategy_research_slippage_bps: float = 50.0
+    strategy_research_initial_capital: float = 100_000.0
+    strategy_research_min_trades: int = 30
+    strategy_research_min_sharpe: float = 0.0
+    strategy_research_instability_budget: int = 12
+    strategy_research_regime_gate: bool = True
+
+    @property
+    def strategy_research_plan(self) -> Any:
+        """A :class:`~qtrader.application.research.strategy.engine.ResearchPlan`."""
+        from decimal import Decimal
+
+        from qtrader.application.research.strategy.engine import MetricGate, ResearchPlan
+        from qtrader.application.research.strategy.generator import SearchLimits
+
+        def _parse_interval(token: str) -> Interval:
+            """Accept either the enum name (``D1``) or its value (``1d``)."""
+            t = token.strip().upper()
+            for iv in Interval:
+                if iv.name == t or iv.value.upper() == t:
+                    return iv
+            raise ValueError(f"unknown research interval {token!r}")
+
+        intervals: tuple[Interval, ...] = (Interval.D1,)
+        if self.strategy_research_intervals.strip():
+            parts = [p for p in self.strategy_research_intervals.split(",") if p.strip()]
+            intervals = tuple(_parse_interval(p) for p in parts)
+        return ResearchPlan(
+            limits=SearchLimits(
+                max_strategies=self.strategy_research_max_strategies,
+                computational_budget=self.strategy_research_computational_budget,
+                max_indicators=self.strategy_research_max_indicators,
+                max_conditions=self.strategy_research_max_conditions,
+                intervals=intervals,
+            ),
+            gate=MetricGate(
+                min_sharpe=self.strategy_research_min_sharpe,
+                min_trades=self.strategy_research_min_trades,
+            ),
+            initial_capital=Decimal(str(self.strategy_research_initial_capital)),
+            commission_bps=self.strategy_research_commission_bps,
+            slippage_bps=self.strategy_research_slippage_bps,
+            instability_budget=self.strategy_research_instability_budget,
+        )
+
+
 class Settings(
     DatabaseSettingsMixin,
     ApiSettingsMixin,
@@ -313,6 +368,7 @@ class Settings(
     MarketSettingsMixin,
     WorkerSettingsMixin,
     ResearchSettingsMixin,
+    StrategyResearchSettingsMixin,
     BaseSettings,
 ):
     model_config = SettingsConfigDict(

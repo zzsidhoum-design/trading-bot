@@ -16,6 +16,7 @@ from qtrader.application.research.adapters import (
     PortfolioAdapter,
     PredictionAdapter,
     StrategyAdapter,
+    StrategyResearchAdapter,
 )
 from qtrader.application.research.interfaces import (
     BacktestInterface,
@@ -39,4 +40,5 @@ __all__ = [
     "PredictionInterface",
     "StrategyAdapter",
     "StrategyInterface",
+    "StrategyResearchAdapter",
 ]

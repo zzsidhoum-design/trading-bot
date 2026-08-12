@@ -19,6 +19,12 @@ from qtrader.application.research.interfaces import (
     PredictionInterface,
     StrategyInterface,
 )
+from qtrader.application.research.strategy.engine import (
+    ResearchReport,
+    ResearchRequest,
+    StrategyResearchEngine,
+)
+from qtrader.application.research.strategy.registry import StrategyRegistry
 from qtrader.application.services.backtest import BacktestParams, BacktestResult, BacktestRunner
 from qtrader.application.services.indicators import IndicatorEngine
 from qtrader.application.services.portfolio_service import PortfolioService
@@ -161,6 +167,20 @@ class PredictionAdapter(PredictionInterface):
         return self.model.predict(features)
 
 
+@dataclass(frozen=True, slots=True)
+class StrategyResearchAdapter:
+    """Research seam: run the automated strategy research workflow."""
+
+    engine: StrategyResearchEngine
+
+    async def run(self, request: ResearchRequest) -> ResearchReport:
+        return await self.engine.run(request)
+
+    @property
+    def registry(self) -> StrategyRegistry:
+        return self.engine.registry
+
+
 __all__ = [
     "BacktestAdapter",
     "IndicatorAdapter",
@@ -168,4 +188,5 @@ __all__ = [
     "PortfolioAdapter",
     "PredictionAdapter",
     "StrategyAdapter",
+    "StrategyResearchAdapter",
 ]

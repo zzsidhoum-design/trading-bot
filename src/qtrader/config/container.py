@@ -34,7 +34,10 @@ from qtrader.application.research import (
     MarketDataAdapter,
     PortfolioAdapter,
     PredictionAdapter,
+    StrategyResearchAdapter,
 )
+from qtrader.application.research.strategy.engine import StrategyResearchEngine
+from qtrader.application.research.strategy.registry import InMemoryStrategyRegistry
 from qtrader.application.services.allocation_policy import EqualWeightAllocation
 from qtrader.application.services.backtest import BacktestRunner
 from qtrader.application.services.bar_cleaner import BarCleaner
@@ -493,6 +496,23 @@ class Container:
         c.register(
             PredictionAdapter,
             instance=PredictionAdapter(model=HeuristicModel()),
+        )
+
+        strategy_registry = InMemoryStrategyRegistry()
+        c.register(InMemoryStrategyRegistry, instance=strategy_registry)
+        strategy_research_engine = StrategyResearchEngine(
+            prices=c.resolve(PriceRepository),
+            performance=c.resolve(PerformanceRepository),
+            risk_calculator=risk_calculator,
+            indicator_engine=IndicatorEngine(),
+            logs=c.resolve(SystemLogRepository),
+            plan=self._settings.strategy_research_plan,
+            registry=strategy_registry,
+        )
+        c.register(StrategyResearchEngine, instance=strategy_research_engine)
+        c.register(
+            StrategyResearchAdapter,
+            instance=StrategyResearchAdapter(engine=strategy_research_engine),
         )
 
         c.register(
