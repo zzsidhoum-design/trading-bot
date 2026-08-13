@@ -356,6 +356,90 @@ class StrategyResearchSettingsMixin(BaseSettings):
         )
 
 
+class StrategyValidationSettingsMixin(BaseSettings):
+    """Phase 3 — automated strategy validation & edge detection (research only)."""
+
+    strategy_validation_max_strategies: int = 60
+    strategy_validation_computational_budget: int = 60
+    strategy_validation_max_indicators: int = 5
+    strategy_validation_max_conditions: int = 3
+    strategy_validation_intervals: str = ""
+    strategy_validation_commission_bps: float = 10.0
+    strategy_validation_slippage_bps: float = 50.0
+    strategy_validation_initial_capital: float = 100_000.0
+    strategy_validation_dev_fraction: float = 0.5
+    strategy_validation_validation_fraction: float = 0.25
+    strategy_validation_folds: int = 4
+    strategy_validation_lookback_bars: int = 60
+    strategy_validation_horizon_bars: int = 12
+    strategy_validation_warmup_bars: int = 30
+    strategy_validation_benchmark_gate: bool = True
+    strategy_validation_max_ranked: int = 10
+    strategy_validation_min_trades: int = 30
+    strategy_validation_min_sharpe: float = 0.0
+    strategy_validation_max_drawdown: float = -0.5
+
+    @property
+    def strategy_validation_plan(self) -> Any:
+        """A :class:`~qtrader.application.research.validation.records.ValidationPlan`."""
+        from decimal import Decimal
+
+        from qtrader.application.research.strategy.engine import MetricGate
+        from qtrader.application.research.strategy.generator import SearchLimits
+        from qtrader.application.research.validation.filters import InitialFilterLimits
+        from qtrader.application.research.validation.records import ValidationPlan
+
+        def _parse_interval(token: str) -> Interval:
+            """Accept either the enum name (``D1``) or its value (``1d``)."""
+            t = token.strip().upper()
+            for iv in Interval:
+                if iv.name == t or iv.value.upper() == t:
+                    return iv
+            raise ValueError(f"unknown validation interval {token!r}")
+
+        intervals: tuple[Interval, ...] = (Interval.D1,)
+        if self.strategy_validation_intervals.strip():
+            parts = [p for p in self.strategy_validation_intervals.split(",") if p.strip()]
+            intervals = tuple(_parse_interval(p) for p in parts)
+        return ValidationPlan(
+            limits=SearchLimits(
+                max_strategies=self.strategy_validation_max_strategies,
+                computational_budget=self.strategy_validation_computational_budget,
+                max_indicators=self.strategy_validation_max_indicators,
+                max_conditions=self.strategy_validation_max_conditions,
+                intervals=intervals,
+            ),
+            initial_filter=InitialFilterLimits(
+                min_trades=self.strategy_validation_min_trades,
+            ),
+            dev_gate=MetricGate(
+                min_sharpe=self.strategy_validation_min_sharpe,
+                min_trades=self.strategy_validation_min_trades,
+            ),
+            wf_gate=MetricGate(
+                min_sharpe=self.strategy_validation_min_sharpe,
+                min_trades=self.strategy_validation_min_trades,
+            ),
+            oos_gate=MetricGate(
+                min_sharpe=self.strategy_validation_min_sharpe,
+                min_trades=self.strategy_validation_min_trades,
+                max_drawdown=self.strategy_validation_max_drawdown,
+            ),
+            dev_fraction=self.strategy_validation_dev_fraction,
+            validation_fraction=self.strategy_validation_validation_fraction,
+            initial_capital=Decimal(str(self.strategy_validation_initial_capital)),
+            commission_bps=self.strategy_validation_commission_bps,
+            slippage_bps=self.strategy_validation_slippage_bps,
+            warmup_bars=self.strategy_validation_warmup_bars,
+            folds=self.strategy_validation_folds,
+            lookback_bars=self.strategy_validation_lookback_bars,
+            horizon_bars=self.strategy_validation_horizon_bars,
+            intervals=intervals,
+            benchmark_gate=self.strategy_validation_benchmark_gate,
+            max_ranked=self.strategy_validation_max_ranked,
+        )
+
+
 class Settings(
     DatabaseSettingsMixin,
     ApiSettingsMixin,
@@ -369,6 +453,7 @@ class Settings(
     WorkerSettingsMixin,
     ResearchSettingsMixin,
     StrategyResearchSettingsMixin,
+    StrategyValidationSettingsMixin,
     BaseSettings,
 ):
     model_config = SettingsConfigDict(

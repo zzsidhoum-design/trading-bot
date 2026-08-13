@@ -187,10 +187,22 @@ async def test_agent_enforces_daily_loss_on_todays_realized_loss() -> None:
     # -$3,010 = -3.01% of $100k equity: the live RiskAgent must reject on the
     # daily-loss limit (it used to always feed daily_pnl_pct=0.0 and could
     # never fire).
-    now = datetime.now(UTC)
-    buy = _filled_order(side=TradeSide.BUY, qty=100, fill="100", created=now - timedelta(days=1))
+    # Anchor fills to explicit calendar dates so the test is not sensitive to
+    # the run time (near UTC midnight, `now - 6 min` would fall on yesterday
+    # and the daily-loss window would miss the SELL).
+    today = datetime.now(UTC).date()
+    yesterday = today - timedelta(days=1)
+    buy = _filled_order(
+        side=TradeSide.BUY,
+        qty=100,
+        fill="100",
+        created=datetime(yesterday.year, yesterday.month, yesterday.day, 12, 0, tzinfo=UTC),
+    )
     sell = _filled_order(
-        side=TradeSide.SELL, qty=100, fill="69.9", created=now - timedelta(minutes=6)
+        side=TradeSide.SELL,
+        qty=100,
+        fill="69.9",
+        created=datetime(today.year, today.month, today.day, 12, 0, tzinfo=UTC),
     )
     agent = _risk_agent(orders=FakeOrderRepository([buy, sell]))
     assessment = await agent.assess_symbol(_decision())

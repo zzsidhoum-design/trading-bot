@@ -35,9 +35,12 @@ from qtrader.application.research import (
     PortfolioAdapter,
     PredictionAdapter,
     StrategyResearchAdapter,
+    StrategyValidationAdapter,
 )
 from qtrader.application.research.strategy.engine import StrategyResearchEngine
 from qtrader.application.research.strategy.registry import InMemoryStrategyRegistry
+from qtrader.application.research.validation.engine import StrategyValidationEngine
+from qtrader.application.research.validation.repository import InMemoryValidationRepository
 from qtrader.application.services.allocation_policy import EqualWeightAllocation
 from qtrader.application.services.backtest import BacktestRunner
 from qtrader.application.services.bar_cleaner import BarCleaner
@@ -513,6 +516,24 @@ class Container:
         c.register(
             StrategyResearchAdapter,
             instance=StrategyResearchAdapter(engine=strategy_research_engine),
+        )
+
+        validation_repository = InMemoryValidationRepository()
+        c.register(InMemoryValidationRepository, instance=validation_repository)
+        strategy_validation_engine = StrategyValidationEngine(
+            prices=c.resolve(PriceRepository),
+            performance=c.resolve(PerformanceRepository),
+            risk_calculator=risk_calculator,
+            indicator_engine=IndicatorEngine(),
+            logs=c.resolve(SystemLogRepository),
+            plan=self._settings.strategy_validation_plan,
+            registry=strategy_registry,
+            validation_repository=validation_repository,
+        )
+        c.register(StrategyValidationEngine, instance=strategy_validation_engine)
+        c.register(
+            StrategyValidationAdapter,
+            instance=StrategyValidationAdapter(engine=strategy_validation_engine),
         )
 
         c.register(

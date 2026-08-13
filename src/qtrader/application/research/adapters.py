@@ -25,6 +25,9 @@ from qtrader.application.research.strategy.engine import (
     StrategyResearchEngine,
 )
 from qtrader.application.research.strategy.registry import StrategyRegistry
+from qtrader.application.research.validation.engine import StrategyValidationEngine
+from qtrader.application.research.validation.records import ValidationReport
+from qtrader.application.research.validation.repository import ValidationRepository
 from qtrader.application.services.backtest import BacktestParams, BacktestResult, BacktestRunner
 from qtrader.application.services.indicators import IndicatorEngine
 from qtrader.application.services.portfolio_service import PortfolioService
@@ -181,6 +184,24 @@ class StrategyResearchAdapter:
         return self.engine.registry
 
 
+@dataclass(frozen=True, slots=True)
+class StrategyValidationAdapter:
+    """Research seam: run the Phase 3 validation pipeline."""
+
+    engine: StrategyValidationEngine
+
+    async def run(self, request: ResearchRequest) -> ValidationReport:
+        return await self.engine.run(request)
+
+    @property
+    def registry(self) -> StrategyRegistry:
+        return self.engine.registry
+
+    @property
+    def repository(self) -> ValidationRepository:
+        return self.engine.repository
+
+
 __all__ = [
     "BacktestAdapter",
     "IndicatorAdapter",
@@ -189,4 +210,5 @@ __all__ = [
     "PredictionAdapter",
     "StrategyAdapter",
     "StrategyResearchAdapter",
+    "StrategyValidationAdapter",
 ]
