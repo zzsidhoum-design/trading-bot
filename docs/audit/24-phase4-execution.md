@@ -27,7 +27,7 @@ VALIDATED (phase 3) -> theoretical reference backtest on the OOS window
 The execution broker reuses the production `BacktestRunner._simulate` fill loop
 (pluggable `broker:` seam) with the same signal engine, sizing and risk gates
 used during validation — signals are never changed, only how they fill. Full
-suite **662 passed** (+31 new execution tests); `ruff check src tests` clean;
+suite **667 passed** (+36 execution tests); `ruff check src tests` clean;
 `mypy src` clean (160 files). **No new dependencies.** Nothing trades live.
 
 ## 1. Explicit assumptions only (no fabricated microstructure)
@@ -108,12 +108,17 @@ seeded (`random.Random(seed)`), bar-driven:
   `avg_execution_deviation_bps`, `fill_rate`, `partial_fill_rate`,
   `rejected_rate`, `transaction_costs`, `turnover`, `net_return` / `net_sharpe` /
   `net_sortino` / `max_drawdown`, `trades`, **degradation vs theoretical**
-  (`degradation_return`, `degradation_sharpe`), and liquidity flags
+  (`degradation_return`, `degradation_sharpe`), liquidity flags
   (`unrealistic-order-size-rejected`, `SYMBOL:below-min-avg-volume`,
-  `SYMBOL:below-min-avg-dollar-volume`, per-symbol assessment reasons).
+  `SYMBOL:below-min-avg-dollar-volume`, per-symbol assessment reasons), and
+  **human-readable `rejection_messages`** (e.g. `REJECTED: {symbol} average daily
+  volume 1,000 shares below floor 50,000`).
 - `classify_execution` — the gate: reject on fill rate / rejected rate / negative
   baseline net Sharpe; sensitive on worst-scenario Sharpe or return degradation;
   otherwise robust.
+- `verdict_message` — composes the full human-readable verdict reason for the
+  report (`REJECTED: …` for every failing gate, `SENSITIVE: …` for degradation,
+  `EXECUTION ROBUST: …` otherwise); machine flags stay in `liquidity_flags`.
 
 ## 6. Engine and pipeline integration
 
@@ -164,19 +169,20 @@ seeded (`random.Random(seed)`), bar-driven:
 
 ## 9. Tests performed
 
-- **New** `tests/unit/test_execution_models.py` (31 tests): slippage (buy/sell
+- **New** `tests/unit/test_execution_models.py` (36 tests): slippage (buy/sell
   adverse fills, impact scaling, max cap, ATR drift), liquidity (ADV window,
   volume/dollar floors, unrealistic-size rejection, participation cap), costs
   (bps scaling, minimum), simulator (market next-bar fill, rejection, partial
   fill across bars, buy-stop gap fill, untriggered stop, limit pass-through,
   same-side replacement, cancel, stats), metrics (rates/degradation/turnover,
-  liquidity flags), classification (robust, reject on fill/sharpe, sensitive on
-  degradation).
+  liquidity flags, human-readable rejection messages), classification (robust,
+  reject on fill/sharpe, sensitive on degradation), verdict message (robust,
+  reject/sensitive reasons, carries liquidity messages).
 - Updated Phase 3 engine test to the new semantics: the lenient-plan full-pipeline
   test now asserts all strategies reach `EXECUTION_*` with
   `execution_report` populated and `execution_rejected + execution_sensitive +
   execution_robust == validated`.
-- **Full suite**: **662 passed** (baseline 631 → +31).
+- **Full suite**: **667 passed** (baseline 631 → +36).
 - **Lint/type**: `ruff check src tests` clean; `mypy src` clean (160 files).
 
 ## References

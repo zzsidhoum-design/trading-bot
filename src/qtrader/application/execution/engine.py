@@ -22,6 +22,7 @@ from qtrader.application.execution.backtest import ExecutionAwareBacktestRunner
 from qtrader.application.execution.metrics import (
     classify_execution,
     compute_execution_metrics,
+    verdict_message,
 )
 from qtrader.application.execution.models import (
     ExecutionPlan,
@@ -195,6 +196,17 @@ class StrategyExecutionEngine:
             scenarios=tuple(scenario_results),
             execution_sensitivity=worst_sharpe_deg,
             worst_scenario=worst_scenario,
+            notes=(
+                verdict_message(
+                    status=status,
+                    baseline=baseline,
+                    worst_degradation_sharpe=worst_sharpe_deg,
+                    worst_degradation_return=worst_return_deg,
+                    plan=self._plan,
+                )
+                if baseline is not None
+                else "execution: no tradable window"
+            ),
         )
         await self._log(
             "INFO",

@@ -298,6 +298,7 @@ class ExecutionMetrics:
     degradation_return: float | None
     degradation_sharpe: float | None
     liquidity_flags: tuple[str, ...]
+    rejection_messages: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -450,6 +451,7 @@ def _encode_metrics(metrics: ExecutionMetrics) -> dict[str, Any]:
         "degradation_return": metrics.degradation_return,
         "degradation_sharpe": metrics.degradation_sharpe,
         "liquidity_flags": list(metrics.liquidity_flags),
+        "rejection_messages": list(metrics.rejection_messages),
     }
 
 
@@ -471,6 +473,9 @@ def _decode_metrics(data: dict[str, Any]) -> ExecutionMetrics:
         degradation_return=data.get("degradation_return"),
         degradation_sharpe=data.get("degradation_sharpe"),
         liquidity_flags=tuple(str(f) for f in data.get("liquidity_flags", ())),
+        rejection_messages=tuple(
+            str(m) for m in data.get("rejection_messages", ())
+        ),
     )
 
 

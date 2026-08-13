@@ -87,16 +87,28 @@ def compute_execution_metrics(
         degradation_sharpe = theoretical_sharpe - net_sharpe
 
     flags: list[str] = []
+    messages: list[str] = []
     if stats.unrealistic_orders > 0:
         flags.append("unrealistic-order-size-rejected")
+        messages.append("REJECTED: unrealistic order size vs ADV dollars")
     for symbol, (adv_volume, adv_dollar) in adv_seen.items():
         if adv_volume < liquidity.min_avg_volume:
             flags.append(f"{symbol}:below-min-avg-volume")
+            messages.append(
+                f"REJECTED: {symbol} average daily volume {adv_volume:,.0f} "
+                f"shares below floor {liquidity.min_avg_volume:,.0f}"
+            )
         if adv_dollar < liquidity.min_avg_dollar_volume:
             flags.append(f"{symbol}:below-min-avg-dollar-volume")
+            messages.append(
+                f"REJECTED: {symbol} average daily dollar volume "
+                f"${adv_dollar:,.0f} below floor ${liquidity.min_avg_dollar_volume:,.0f}"
+            )
     for symbol, assessment in assessments.items():
         if not assessment.approved:
             flags.append(f"{symbol}:{':'.join(assessment.reasons)}")
+            for reason in assessment.reasons:
+                messages.append(f"REJECTED: {symbol} {reason}")
 
     return ExecutionMetrics(
         scenario=scenario,
@@ -115,6 +127,7 @@ def compute_execution_metrics(
         degradation_return=degradation_return,
         degradation_sharpe=degradation_sharpe,
         liquidity_flags=tuple(flags),
+        rejection_messages=tuple(messages),
     )
 
 
@@ -146,4 +159,54 @@ def classify_execution(
     return ExecutionStatus.EXECUTION_ROBUST
 
 
-__all__ = ["classify_execution", "compute_execution_metrics"]
+def verdict_message(
+    *,
+    status: ExecutionStatus,
+    baseline: ExecutionMetrics,
+    worst_degradation_sharpe: float | None,
+    worst_degradation_return: float | None,
+    plan: ExecutionPlan,
+) -> str:
+    """Human-readable verdict reason, including every failing gate.
+
+    Machine-readable flags stay in :attr:`ExecutionMetrics.liquidity_flags`;
+    this is the message a reviewer sees (e.g. ``REJECTED: average daily volume
+    below 50,000 shares``).
+    """
+    reasons = list(baseline.rejection_messages)
+    if baseline.fill_rate < plan.min_fill_rate:
+        reasons.append(
+            f"REJECTED: fill rate {baseline.fill_rate:.1%} below {plan.min_fill_rate:.1%}"
+        )
+    if baseline.rejected_rate > plan.max_rejected_rate:
+        reasons.append(
+            f"REJECTED: rejected order rate {baseline.rejected_rate:.1%} "
+            f"above {plan.max_rejected_rate:.1%}"
+        )
+    if (
+        baseline.net_sharpe is not None
+        and baseline.net_sharpe < plan.min_net_sharpe
+    ):
+        reasons.append(
+            f"REJECTED: net Sharpe {baseline.net_sharpe:.2f} below {plan.min_net_sharpe:.2f}"
+        )
+    if worst_degradation_sharpe is not None and (
+        worst_degradation_sharpe > plan.max_absolute_sharpe_degradation
+    ):
+        reasons.append(
+            f"SENSITIVE: worst-case Sharpe degradation {worst_degradation_sharpe:.2f} "
+            f"above {plan.max_absolute_sharpe_degradation:.2f}"
+        )
+    if worst_degradation_return is not None and (
+        worst_degradation_return > plan.max_return_degradation
+    ):
+        reasons.append(
+            f"SENSITIVE: worst-case return degradation {worst_degradation_return:.2f} "
+            f"above {plan.max_return_degradation:.2f}"
+        )
+    if reasons:
+        return "; ".join(reasons)
+    return "EXECUTION ROBUST: fills, costs and worst-case degradation within plan gates"
+
+
+__all__ = ["classify_execution", "compute_execution_metrics", "verdict_message"]

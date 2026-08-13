@@ -13,6 +13,7 @@ from qtrader.application.execution.liquidity import LiquidityModel
 from qtrader.application.execution.metrics import (
     classify_execution,
     compute_execution_metrics,
+    verdict_message,
 )
 from qtrader.application.execution.models import (
     ExecutionMetrics,
@@ -629,6 +630,31 @@ class TestComputeExecutionMetrics:
         assert "A:below-min-avg-dollar-volume" in flags
         assert "A:thin" in flags
 
+    def test_rejection_messages(self) -> None:
+        metrics = compute_execution_metrics(
+            scenario=ExecutionScenario.BASELINE,
+            theoretical=_summary(total_return="0.10", sharpe="1.0"),
+            execution_summary=_summary(total_return="0.08", sharpe="0.9"),
+            execution_equity_curve=[],
+            trades=[],
+            stats=ExecutionStats(),
+            assessments={
+                "A": LiquidityAssessment(approved=False, reasons=("thin",), max_fillable=0)
+            },
+            adv_seen={"A": (Decimal("1000"), Decimal("100000"))},
+            liquidity=LiquidityAssumptions(
+                min_avg_volume=Decimal("50000"),
+                min_avg_dollar_volume=Decimal("500000"),
+            ),
+        )
+        messages = set(metrics.rejection_messages)
+        assert "REJECTED: A average daily volume 1,000 shares below floor 50,000" in messages
+        assert (
+            "REJECTED: A average daily dollar volume $100,000 below floor $500,000"
+            in messages
+        )
+        assert "REJECTED: A thin" in messages
+
 
 # --------------------------------------------------------------------------- #
 # classify_execution
@@ -682,3 +708,56 @@ class TestClassifyExecution:
             plan=ExecutionPlan(),
         )
         assert status is ExecutionStatus.EXECUTION_SENSITIVE
+
+
+# --------------------------------------------------------------------------- #
+# verdict_message
+# --------------------------------------------------------------------------- #
+
+
+class TestVerdictMessage:
+    def test_robust(self) -> None:
+        message = verdict_message(
+            status=ExecutionStatus.EXECUTION_ROBUST,
+            baseline=_metrics_base(),
+            worst_degradation_sharpe=0.1,
+            worst_degradation_return=0.1,
+            plan=ExecutionPlan(),
+        )
+        assert message.startswith("EXECUTION ROBUST:")
+
+    def test_rejected_reasons_are_human_readable(self) -> None:
+        baseline = replace(_metrics_base(), fill_rate=0.5)
+        message = verdict_message(
+            status=ExecutionStatus.EXECUTION_REJECTED,
+            baseline=baseline,
+            worst_degradation_sharpe=0.0,
+            worst_degradation_return=0.0,
+            plan=ExecutionPlan(),
+        )
+        assert "REJECTED: fill rate" in message
+
+    def test_sensitive_reason(self) -> None:
+        message = verdict_message(
+            status=ExecutionStatus.EXECUTION_SENSITIVE,
+            baseline=_metrics_base(),
+            worst_degradation_sharpe=2.0,
+            worst_degradation_return=0.0,
+            plan=ExecutionPlan(),
+        )
+        assert "SENSITIVE:" in message
+        assert "Sharpe degradation 2.00" in message
+
+    def test_carries_liquidity_rejection_messages(self) -> None:
+        baseline = replace(
+            _metrics_base(),
+            rejection_messages=("REJECTED: average daily volume below 50,000 shares",),
+        )
+        message = verdict_message(
+            status=ExecutionStatus.EXECUTION_REJECTED,
+            baseline=baseline,
+            worst_degradation_sharpe=0.0,
+            worst_degradation_return=0.0,
+            plan=ExecutionPlan(),
+        )
+        assert "REJECTED: average daily volume below 50,000 shares" in message
