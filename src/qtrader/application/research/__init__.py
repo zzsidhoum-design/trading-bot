@@ -16,6 +16,7 @@ from qtrader.application.research.adapters import (
     PortfolioAdapter,
     PredictionAdapter,
     StrategyAdapter,
+    StrategyExecutionAdapter,
     StrategyResearchAdapter,
     StrategyValidationAdapter,
 )
@@ -40,6 +41,7 @@ __all__ = [
     "PredictionAdapter",
     "PredictionInterface",
     "StrategyAdapter",
+    "StrategyExecutionAdapter",
     "StrategyInterface",
     "StrategyResearchAdapter",
     "StrategyValidationAdapter",

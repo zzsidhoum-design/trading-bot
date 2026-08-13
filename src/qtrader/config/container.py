@@ -28,12 +28,14 @@ from qtrader.application.agents.prediction import PredictionAgent
 from qtrader.application.agents.risk import RiskAgent
 from qtrader.application.agents.scanner import MarketScanner
 from qtrader.application.agents.technical import TechnicalAgent
+from qtrader.application.execution.engine import StrategyExecutionEngine
 from qtrader.application.research import (
     BacktestAdapter,
     IndicatorAdapter,
     MarketDataAdapter,
     PortfolioAdapter,
     PredictionAdapter,
+    StrategyExecutionAdapter,
     StrategyResearchAdapter,
     StrategyValidationAdapter,
 )
@@ -520,6 +522,20 @@ class Container:
 
         validation_repository = InMemoryValidationRepository()
         c.register(InMemoryValidationRepository, instance=validation_repository)
+        strategy_execution_engine = StrategyExecutionEngine(
+            prices=c.resolve(PriceRepository),
+            performance=c.resolve(PerformanceRepository),
+            risk_calculator=risk_calculator,
+            indicator_engine=IndicatorEngine(),
+            logs=c.resolve(SystemLogRepository),
+            plan=self._settings.strategy_execution_plan,
+        )
+        c.register(StrategyExecutionEngine, instance=strategy_execution_engine)
+        c.register(
+            StrategyExecutionAdapter,
+            instance=StrategyExecutionAdapter(engine=strategy_execution_engine),
+        )
+
         strategy_validation_engine = StrategyValidationEngine(
             prices=c.resolve(PriceRepository),
             performance=c.resolve(PerformanceRepository),
@@ -529,6 +545,7 @@ class Container:
             plan=self._settings.strategy_validation_plan,
             registry=strategy_registry,
             validation_repository=validation_repository,
+            execution_engine=strategy_execution_engine,
         )
         c.register(StrategyValidationEngine, instance=strategy_validation_engine)
         c.register(

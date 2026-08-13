@@ -17,6 +17,11 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
+from qtrader.application.execution.models import (
+    StrategyExecutionReport,
+    decode_execution_report,
+    encode_execution_report,
+)
 from qtrader.application.research.strategy.engine import MetricGate
 from qtrader.application.research.strategy.generator import SearchLimits
 from qtrader.application.research.strategy.specs import StrategySpec, decode_spec, encode_spec
@@ -37,21 +42,38 @@ class ValidationStage(StrEnum):
     RESEARCH_FURTHER = "research_further"
     REJECTED_OOS = "rejected_oos"
     VALIDATED = "validated"
+    EXECUTION_REJECTED = "execution_rejected"
+    EXECUTION_SENSITIVE = "execution_sensitive"
+    EXECUTION_ROBUST = "execution_robust"
     FAILED = "failed"
 
 
 class FinalStatus(StrEnum):
-    """The three research verdicts a strategy may finally carry."""
+    """The research verdicts a strategy may finally carry.
+
+    Phase 4 adds the execution-robustness verdicts on top of ``VALIDATED``:
+    a validated strategy is re-gated by the execution simulator, so its final
+    status becomes EXECUTION_REJECTED / EXECUTION_SENSITIVE / EXECUTION_ROBUST.
+    """
 
     REJECTED = "rejected"
     RESEARCH_FURTHER = "research_further"
     VALIDATED = "validated"
+    EXECUTION_REJECTED = "execution_rejected"
+    EXECUTION_SENSITIVE = "execution_sensitive"
+    EXECUTION_ROBUST = "execution_robust"
 
 
 def final_status_for(stage: ValidationStage) -> FinalStatus | None:
-    """Map a pipeline stage onto one of the three research verdicts."""
+    """Map a pipeline stage onto one of the research verdicts."""
     if stage is ValidationStage.VALIDATED:
         return FinalStatus.VALIDATED
+    if stage is ValidationStage.EXECUTION_REJECTED:
+        return FinalStatus.EXECUTION_REJECTED
+    if stage is ValidationStage.EXECUTION_SENSITIVE:
+        return FinalStatus.EXECUTION_SENSITIVE
+    if stage is ValidationStage.EXECUTION_ROBUST:
+        return FinalStatus.EXECUTION_ROBUST
     if stage in (
         ValidationStage.RESEARCH_FURTHER,
         ValidationStage.REJECTED_OOS,
@@ -342,6 +364,7 @@ class ValidationRecord:
     multiple_testing: MultipleTestingReport | None = None
     edge: EdgeStats | None = None
     robustness_flags: tuple[str, ...] = ()
+    execution_report: StrategyExecutionReport | None = None
     notes: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
@@ -366,6 +389,9 @@ class ValidationReport:
     research_further: int
     validated: int
     failed: int
+    execution_rejected: int = 0
+    execution_sensitive: int = 0
+    execution_robust: int = 0
     best_validated: tuple[str, ...] = ()
     rejected_reasons: dict[str, str] = field(default_factory=dict)
 
@@ -488,6 +514,11 @@ def encode_record(record: ValidationRecord) -> dict[str, Any]:
         "benchmark_report": _encode_benchmark(record.benchmark_report),
         "multiple_testing": _encode_mtesting(record.multiple_testing),
         "edge": _encode_edge(record.edge),
+        "execution_report": (
+            encode_execution_report(record.execution_report)
+            if record.execution_report is not None
+            else None
+        ),
         "robustness_flags": list(record.robustness_flags),
         "notes": record.notes,
         "created_at": record.created_at.isoformat(),
@@ -517,6 +548,11 @@ def decode_record(data: dict[str, Any]) -> ValidationRecord:
         benchmark_report=_decode_benchmark(data.get("benchmark_report")),
         multiple_testing=_decode_mtesting(data.get("multiple_testing")),
         edge=_decode_edge(data.get("edge")),
+        execution_report=(
+            decode_execution_report(data["execution_report"])
+            if data.get("execution_report")
+            else None
+        ),
         robustness_flags=tuple(str(f) for f in data.get("robustness_flags", ())),
         notes=str(data.get("notes", "")),
         created_at=datetime.fromisoformat(data["created_at"]),

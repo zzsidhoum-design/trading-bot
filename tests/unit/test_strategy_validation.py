@@ -716,20 +716,39 @@ class TestValidationEngine:
         report = await engine.run(_request(_engine_dataset()))
         assert report.total_generated == 2
         assert report.validated == 2
+        # Phase 4 re-gates every phase-3 VALIDATED strategy by execution outcome.
+        assert (
+            report.execution_rejected
+            + report.execution_sensitive
+            + report.execution_robust
+        ) == report.validated
         records = repo.list_all()
         assert len(records) == 2
         for record in records:
-            assert record.stage is ValidationStage.VALIDATED
-            assert record.final_status is FinalStatus.VALIDATED
+            assert record.stage in (
+                ValidationStage.EXECUTION_REJECTED,
+                ValidationStage.EXECUTION_SENSITIVE,
+                ValidationStage.EXECUTION_ROBUST,
+            )
+            assert record.final_status in (
+                FinalStatus.EXECUTION_REJECTED,
+                FinalStatus.EXECUTION_SENSITIVE,
+                FinalStatus.EXECUTION_ROBUST,
+            )
             assert record.dev_result is not None
             assert record.validation_result is not None
             assert record.wf_result is not None
             assert record.oos_result is not None
             assert record.edge is not None
             assert record.multiple_testing is not None
+            assert record.execution_report is not None
         statuses = {r.status for r in registry.list_all()}
-        assert StrategyStatus.VALIDATED in statuses
-        assert not statuses - {StrategyStatus.VALIDATED}
+        assert StrategyStatus.EXECUTION_REJECTED in statuses
+        assert not statuses - {
+            StrategyStatus.EXECUTION_REJECTED,
+            StrategyStatus.EXECUTION_SENSITIVE,
+            StrategyStatus.EXECUTION_ROBUST,
+        }
 
     @pytest.mark.asyncio
     async def test_strict_dev_gate_rejects_everything(self) -> None:

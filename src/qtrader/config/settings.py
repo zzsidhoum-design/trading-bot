@@ -440,6 +440,46 @@ class StrategyValidationSettingsMixin(BaseSettings):
         )
 
 
+class StrategyExecutionSettingsMixin(BaseSettings):
+    """Phase 4 — execution-robustness verdicts on validated strategies."""
+
+    strategy_execution_commission_bps: float = 10.0
+    strategy_execution_min_fill_rate: float = 0.90
+    strategy_execution_min_net_sharpe: float = 0.0
+    strategy_execution_max_sharpe_degradation: float = 0.5
+    strategy_execution_max_return_degradation: float = 0.5
+    strategy_execution_max_rejected_rate: float = 0.25
+    strategy_execution_min_avg_volume: float = 50_000.0
+    strategy_execution_min_avg_dollar_volume: float = 500_000.0
+    strategy_execution_seed: int = 42
+
+    @property
+    def strategy_execution_plan(self) -> Any:
+        """A :class:`~qtrader.application.execution.models.ExecutionPlan`."""
+        from decimal import Decimal
+
+        from qtrader.application.execution.models import (
+            ExecutionPlan,
+            LiquidityAssumptions,
+        )
+
+        return ExecutionPlan(
+            commission_bps=self.strategy_execution_commission_bps,
+            min_fill_rate=self.strategy_execution_min_fill_rate,
+            min_net_sharpe=self.strategy_execution_min_net_sharpe,
+            max_absolute_sharpe_degradation=self.strategy_execution_max_sharpe_degradation,
+            max_return_degradation=self.strategy_execution_max_return_degradation,
+            max_rejected_rate=self.strategy_execution_max_rejected_rate,
+            liquidity=LiquidityAssumptions(
+                min_avg_volume=Decimal(str(self.strategy_execution_min_avg_volume)),
+                min_avg_dollar_volume=Decimal(
+                    str(self.strategy_execution_min_avg_dollar_volume)
+                ),
+            ),
+            seed=self.strategy_execution_seed,
+        )
+
+
 class Settings(
     DatabaseSettingsMixin,
     ApiSettingsMixin,
@@ -454,6 +494,7 @@ class Settings(
     ResearchSettingsMixin,
     StrategyResearchSettingsMixin,
     StrategyValidationSettingsMixin,
+    StrategyExecutionSettingsMixin,
     BaseSettings,
 ):
     model_config = SettingsConfigDict(

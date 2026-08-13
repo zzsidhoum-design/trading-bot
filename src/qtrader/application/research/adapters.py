@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from qtrader.application.research.interfaces import (
     BacktestInterface,
@@ -24,7 +25,7 @@ from qtrader.application.research.strategy.engine import (
     ResearchRequest,
     StrategyResearchEngine,
 )
-from qtrader.application.research.strategy.registry import StrategyRegistry
+from qtrader.application.research.strategy.registry import StrategyRecord, StrategyRegistry
 from qtrader.application.research.validation.engine import StrategyValidationEngine
 from qtrader.application.research.validation.records import ValidationReport
 from qtrader.application.research.validation.repository import ValidationRepository
@@ -46,6 +47,16 @@ from qtrader.domain.ports import (
     PriceRepository,
 )
 from qtrader.domain.value_objects import Interval, Money, PriceBar
+
+if TYPE_CHECKING:
+    from qtrader.application.execution.engine import (
+        ExecutionRequest,
+        StrategyExecutionEngine,
+    )
+    from qtrader.application.execution.models import (
+        ExecutionPlan,
+        StrategyExecutionReport,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +213,22 @@ class StrategyValidationAdapter:
         return self.engine.repository
 
 
+@dataclass(frozen=True, slots=True)
+class StrategyExecutionAdapter:
+    """Research seam: run the Phase 4 execution-robustness verdict."""
+
+    engine: StrategyExecutionEngine
+
+    async def run(
+        self, record: StrategyRecord, request: ExecutionRequest
+    ) -> StrategyExecutionReport:
+        return await self.engine.run(record, request)
+
+    @property
+    def plan(self) -> ExecutionPlan:
+        return self.engine.plan
+
+
 __all__ = [
     "BacktestAdapter",
     "IndicatorAdapter",
@@ -209,6 +236,7 @@ __all__ = [
     "PortfolioAdapter",
     "PredictionAdapter",
     "StrategyAdapter",
+    "StrategyExecutionAdapter",
     "StrategyResearchAdapter",
     "StrategyValidationAdapter",
 ]

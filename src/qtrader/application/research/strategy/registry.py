@@ -34,6 +34,9 @@ class StrategyStatus(StrEnum):
     INITIAL_BACKTEST = "initial_backtest"
     VALIDATED = "validated"
     FAILED = "failed"
+    EXECUTION_REJECTED = "execution_rejected"
+    EXECUTION_SENSITIVE = "execution_sensitive"
+    EXECUTION_ROBUST = "execution_robust"
 
 
 @dataclass(frozen=True, slots=True)

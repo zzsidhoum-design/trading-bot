@@ -15,16 +15,25 @@ import statistics
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from qtrader.application.execution.models import (
+    ExecutionPlan,
+    ExecutionStatus,
+    StrategyExecutionReport,
+)
 from qtrader.application.research.strategy.engine import (
     ResearchRequest,
     StrategyWalkForwardValidator,
 )
+
+if TYPE_CHECKING:
+    from qtrader.application.execution.engine import StrategyExecutionEngine
 from qtrader.application.research.strategy.evaluator import StrategyEvaluator
 from qtrader.application.research.strategy.generator import StrategyGenerator
 from qtrader.application.research.strategy.registry import (
     InMemoryStrategyRegistry,
+    StrategyRecord,
     StrategyRegistry,
     StrategyStatus,
 )
@@ -106,6 +115,25 @@ from qtrader.domain.value_objects import Interval, Money, PriceBar, TradingMode
 logger = get_logger("qtrader.strategy_validation")
 
 
+_EXECUTION_STAGE = {
+    ExecutionStatus.EXECUTION_REJECTED: ValidationStage.EXECUTION_REJECTED,
+    ExecutionStatus.EXECUTION_SENSITIVE: ValidationStage.EXECUTION_SENSITIVE,
+    ExecutionStatus.EXECUTION_ROBUST: ValidationStage.EXECUTION_ROBUST,
+}
+
+_EXECUTION_COUNT = {
+    ExecutionStatus.EXECUTION_REJECTED: "execution_rejected",
+    ExecutionStatus.EXECUTION_SENSITIVE: "execution_sensitive",
+    ExecutionStatus.EXECUTION_ROBUST: "execution_robust",
+}
+
+_EXECUTION_REGISTRY_STATUS = {
+    ExecutionStatus.EXECUTION_REJECTED: StrategyStatus.EXECUTION_REJECTED,
+    ExecutionStatus.EXECUTION_SENSITIVE: StrategyStatus.EXECUTION_SENSITIVE,
+    ExecutionStatus.EXECUTION_ROBUST: StrategyStatus.EXECUTION_ROBUST,
+}
+
+
 class _NoopBacktestRepository(BacktestRepository):
     """Validation backtests are ephemeral; results live in the research DB."""
 
@@ -174,6 +202,7 @@ class StrategyValidationEngine:
         param_checker: ParameterRobustnessChecker | None = None,
         ranker: StrategyRanker | None = None,
         sectors: dict[str, str] | None = None,
+        execution_engine: StrategyExecutionEngine | None = None,
     ) -> None:
         self._prices = prices
         self._performance = performance
@@ -191,6 +220,20 @@ class StrategyValidationEngine:
         self._param_checker = param_checker or ParameterRobustnessChecker()
         self._ranker = ranker or StrategyRanker()
         self._sectors = sectors or {}
+        if execution_engine is None:
+            from qtrader.application.execution.engine import StrategyExecutionEngine
+
+            execution_engine = StrategyExecutionEngine(
+                prices=self._prices,
+                performance=self._performance,
+                risk_calculator=self._risk,
+                indicator_engine=self._indicators,
+                logs=self._logs,
+                plan=ExecutionPlan(),
+                warmup_bars=self._plan.warmup_bars,
+                sectors=self._sectors or None,
+            )
+        self._execution_engine = execution_engine
 
     @property
     def plan(self) -> ValidationPlan:
@@ -226,6 +269,9 @@ class StrategyValidationEngine:
             "rejected_oos": 0,
             "reached_oos": 0,
             "validated": 0,
+            "execution_rejected": 0,
+            "execution_sensitive": 0,
+            "execution_robust": 0,
             "failed": 0,
         }
         rejected_reasons: dict[str, str] = {}
@@ -392,6 +438,26 @@ class StrategyValidationEngine:
                     trades=oos_result.summary.trades_count,
                     prob_real=mtest.prob_real,
                 )
+
+                execution_report = await self._execution_verdict(spec, oos, request)
+                stage = _EXECUTION_STAGE[execution_report.status]
+                record = self._advance(
+                    record,
+                    stage,
+                    execution_report=execution_report,
+                    note=f"execution: {execution_report.status.value}",
+                )
+                marker = _EXECUTION_COUNT[execution_report.status]
+                counts[marker] += 1
+                self._mark_registry(
+                    spec.id, _EXECUTION_REGISTRY_STATUS[execution_report.status]
+                )
+                await self._log(
+                    "INFO", "execution robustness decided",
+                    strategy=spec.id,
+                    status=execution_report.status.value,
+                    sensitivity=_opt_float(execution_report.execution_sensitivity),
+                )
             else:
                 reason = "failed OOS gate" if not oos_pass else "does not beat OOS benchmarks"
                 record = self._advance(
@@ -425,6 +491,9 @@ class StrategyValidationEngine:
             rejected_oos=counts["rejected_oos"],
             research_further=research_further,
             validated=counts["validated"],
+            execution_rejected=counts["execution_rejected"],
+            execution_sensitive=counts["execution_sensitive"],
+            execution_robust=counts["execution_robust"],
             failed=counts["failed"],
             best_validated=best,
             rejected_reasons=rejected_reasons,
@@ -817,10 +886,34 @@ class StrategyValidationEngine:
         validated = [
             record
             for record in self._repo.list_all()
-            if record.stage is ValidationStage.VALIDATED
+            if record.stage in (ValidationStage.VALIDATED, ValidationStage.EXECUTION_ROBUST)
         ]
         ranked = self._ranker.rank(validated)
         return tuple(entry.strategy_id for entry in ranked[: self._plan.max_ranked])
+
+    async def _execution_verdict(
+        self,
+        spec: StrategySpec,
+        window: DataWindow,
+        request: ResearchRequest,
+    ) -> StrategyExecutionReport:
+        """Run the Phase 4 execution-robustness engine on the OOS window."""
+        from qtrader.application.execution.engine import ExecutionRequest
+
+        report = await self._execution_engine.run(
+            StrategyRecord(spec=spec, status=StrategyStatus.VALIDATED, enabled=True),
+            ExecutionRequest(
+                symbols=tuple(request.symbols),
+                start=window.start,
+                end=window.end,
+                interval=request.interval,
+                initial_capital=request.initial_capital,
+                dataset_version=request.dataset_version,
+            ),
+        )
+        if report.status is ExecutionStatus.EXECUTION_REJECTED and not report.scenarios:
+            report = replace(report, notes="execution: no tradable OOS window")
+        return report
 
     def _register_in_registry(self, spec: StrategySpec) -> None:
         if self._registry.get(spec.id) is not None:
@@ -855,7 +948,7 @@ class RobustnessBundle:
     flags: tuple[str, ...]
 
 
-def _opt_float(value: Decimal | None) -> float | None:
+def _opt_float(value: Decimal | float | None) -> float | None:
     return None if value is None else float(value)
 
 

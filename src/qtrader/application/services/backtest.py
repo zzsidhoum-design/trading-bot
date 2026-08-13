@@ -166,6 +166,30 @@ class BacktestBroker:
         """Commission on a (quantity, price) fill — shared by all exit fills."""
         return (price * _dec(quantity) * self._commission_rate).quantize(Decimal("0.01"))
 
+    def exit_fill(
+        self,
+        symbol: str,
+        side: TradeSide,
+        quantity: int,
+        price: Decimal,
+        ts: datetime,
+    ) -> BacktestFill:
+        """Build a bracket/end-of-test exit fill (slippage-adjusted by default).
+
+        Execution-aware brokers override this to route exits through the
+        :class:`ExecutionSimulator` so stops/take-profits also pay realistic
+        friction. The stock broker leaves the exit price untouched (identical
+        to the historical behaviour) and only charges commission.
+        """
+        return BacktestFill(
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            commission=self.commission_for(quantity, price),
+            ts=ts,
+        )
+
     def fills_at(self, bar: PriceBar) -> list[BacktestFill]:
         """Consume every queued order for ``bar.symbol`` and fill at bar.open."""
         fills: list[BacktestFill] = []
@@ -389,8 +413,9 @@ class BacktestRunner:
         model_outputs: dict[str, dict[Any, float]] | None = None,
         series: dict[str, list[IndicatorSnapshot]] | None = None,
         sectors: dict[str, str] | None = None,
+        broker: BacktestBroker | None = None,
     ) -> BacktestResult:
-        broker = BacktestBroker(
+        broker = broker or BacktestBroker(
             commission_bps=params.commission_bps, slippage_bps=params.slippage_bps
         )
         signals = _SignalEngine(
@@ -452,12 +477,11 @@ class BacktestRunner:
                     ):
                         exit_price, outcome = bar.close, "time"
                     if exit_price is not None:
-                        fill = BacktestFill(
+                        fill = broker.exit_fill(
                             symbol=pos.symbol,
                             side=TradeSide.SELL,
                             quantity=pos.quantity,
                             price=exit_price,
-                            commission=broker.commission_for(pos.quantity, exit_price),
                             ts=bar.ts,
                         )
                         cash = self._close_position(fill, cash, positions, trades, outcome=outcome)
@@ -500,12 +524,11 @@ class BacktestRunner:
             end_cursor = cursors.get(symbol)
             if end_cursor is None:
                 continue
-            fill = BacktestFill(
+            fill = broker.exit_fill(
                 symbol=symbol,
                 side=TradeSide.SELL,
                 quantity=pos.quantity,
                 price=end_cursor.last_close,
-                commission=broker.commission_for(pos.quantity, end_cursor.last_close),
                 ts=last_ts,
             )
             cash = self._close_position(fill, cash, positions, trades, outcome="end_of_test")
@@ -615,6 +638,26 @@ class BacktestRunner:
         cost = fill.price * _dec(fill.quantity)
         if cost + fill.commission > cash:
             return cash
+        existing = positions.get(fill.symbol)
+        if existing is not None:
+            # Execution-aware partial fills add to the working position.
+            total = existing.quantity + fill.quantity
+            avg = (
+                existing.entry_price * _dec(existing.quantity)
+                + fill.price * _dec(fill.quantity)
+            ) / _dec(total)
+            positions[fill.symbol] = _OpenPosition(
+                symbol=existing.symbol,
+                quantity=total,
+                entry_price=avg.quantize(_PRICE_QUANT),
+                stop_loss=existing.stop_loss,
+                take_profit=existing.take_profit,
+                entry_ts=existing.entry_ts,
+                fees=existing.fees + fill.commission,
+                entry_bar_index=existing.entry_bar_index,
+                peak=max(existing.peak, fill.price),
+            )
+            return cash - cost - fill.commission
         stop = fill.price * (Decimal(1) - _dec(params.stop_loss_pct))
         take = fill.price * (Decimal(1) + _dec(params.take_profit_pct))
         positions[fill.symbol] = _OpenPosition(
@@ -638,6 +681,41 @@ class BacktestRunner:
         trades: list[ClosedTrade],
         outcome: str,
     ) -> Decimal:
+        pos = positions.get(fill.symbol)
+        if pos is None:
+            return cash
+        if fill.quantity < pos.quantity:
+            # Execution-aware partial close: realize the slice, keep the rest.
+            proceeds = fill.price * _dec(fill.quantity) - fill.commission
+            closed_cost = pos.entry_price * _dec(fill.quantity)
+            pnl = proceeds - closed_cost
+            pnl_pct = pnl / closed_cost if closed_cost else Decimal(0)
+            trades.append(
+                ClosedTrade(
+                    symbol=pos.symbol,
+                    quantity=fill.quantity,
+                    entry_price=pos.entry_price,
+                    exit_price=fill.price,
+                    pnl=pnl,
+                    pnl_pct=pnl_pct,
+                    fees=fill.commission,
+                    entry_time=pos.entry_ts,
+                    exit_time=fill.ts,
+                    outcome=outcome,
+                )
+            )
+            positions[fill.symbol] = _OpenPosition(
+                symbol=pos.symbol,
+                quantity=pos.quantity - fill.quantity,
+                entry_price=pos.entry_price,
+                stop_loss=pos.stop_loss,
+                take_profit=pos.take_profit,
+                entry_ts=pos.entry_ts,
+                fees=pos.fees,
+                entry_bar_index=pos.entry_bar_index,
+                peak=pos.peak,
+            )
+            return cash + proceeds
         pos = positions.pop(fill.symbol, None)
         if pos is None:
             return cash
