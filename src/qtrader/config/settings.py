@@ -169,6 +169,114 @@ class TradingSettingsMixin(BaseSettings):
     broker_provider: str = "paper"
 
 
+class PortfolioRiskSettingsMixin(BaseSettings):
+    """Phase 5 — the independent Portfolio & Risk Management Engine.
+
+    All controls are configurable and default conservative. The engine is
+    authoritative and independent of the AI agents and the Phase 6 AI
+    Strategy Selector.
+    """
+
+    # Portfolio constraints (fractions unless stated otherwise).
+    pr_max_position_weight_pct: float = 0.25
+    pr_max_portfolio_exposure_pct: float = 0.80
+    pr_max_sector_exposure_pct: float = 0.40
+    pr_max_correlated_exposure_pct: float = 0.50
+    pr_correlation_threshold: float = 0.70
+    pr_max_positions: int = 10
+    pr_max_turnover_pct: float = 0.50
+    pr_max_leverage_pct: float = 0.0
+
+    # Position sizing.
+    pr_sizing_method: str = "fixed_allocation"
+    pr_fixed_allocation_pct: float = 0.20
+    pr_vol_target_pct: float = 0.10
+    pr_max_annualized_vol_pct: float = 0.40
+    pr_risk_per_trade_pct: float = 0.01
+    pr_max_weight_pct: float = 0.25
+    pr_annualization: float = 252.0
+
+    # Drawdown protection / failure controls.
+    pr_max_strategy_drawdown_pct: float = 0.25
+    pr_max_portfolio_drawdown_pct: float = 0.20
+    pr_max_daily_loss_pct: float = 0.03
+    pr_max_consecutive_losses: int = 5
+    pr_monitor_drawdown_pct: float = 0.15
+    pr_reduce_drawdown_pct: float = 0.20
+    pr_suspension_cooldown_days: int = 30
+    pr_monitored_weight_factor: float = 0.75
+    pr_reduced_weight_factor: float = 0.50
+
+    # Risk-aware strategy allocation weights.
+    pr_allocation_sharpe_weight: float = 1.0
+    pr_allocation_sortino_weight: float = 0.5
+    pr_allocation_oos_return_weight: float = 0.5
+    pr_allocation_execution_weight: float = 1.0
+    pr_allocation_drawdown_weight: float = 1.0
+    pr_allocation_volatility_weight: float = 0.5
+    pr_allocation_correlation_weight: float = 1.0
+    pr_allocation_regime_weight: float = 0.0
+    pr_allocation_min_weight_pct: float = 0.05
+    pr_allocation_max_weight_pct: float = 0.50
+
+    @property
+    def portfolio_risk_plan(self) -> Any:
+        """A :class:`~qtrader.application.portfolio_mgmt.models.PortfolioRiskPlan`."""
+        from qtrader.application.portfolio_mgmt.models import (
+            AllocationPolicyConfig,
+            DrawdownProtection,
+            PortfolioConstraints,
+            PortfolioRiskPlan,
+            PositionSizingMethod,
+            SizingPolicy,
+        )
+
+        return PortfolioRiskPlan(
+            constraints=PortfolioConstraints(
+                max_position_weight_pct=self.pr_max_position_weight_pct,
+                max_portfolio_exposure_pct=self.pr_max_portfolio_exposure_pct,
+                max_sector_exposure_pct=self.pr_max_sector_exposure_pct,
+                max_correlated_exposure_pct=self.pr_max_correlated_exposure_pct,
+                correlation_threshold=self.pr_correlation_threshold,
+                max_positions=self.pr_max_positions,
+                max_turnover_pct=self.pr_max_turnover_pct,
+                max_leverage_pct=self.pr_max_leverage_pct,
+            ),
+            drawdown_protection=DrawdownProtection(
+                max_strategy_drawdown_pct=self.pr_max_strategy_drawdown_pct,
+                max_portfolio_drawdown_pct=self.pr_max_portfolio_drawdown_pct,
+                max_daily_loss_pct=self.pr_max_daily_loss_pct,
+                max_consecutive_losses=self.pr_max_consecutive_losses,
+                monitor_drawdown_pct=self.pr_monitor_drawdown_pct,
+                reduce_drawdown_pct=self.pr_reduce_drawdown_pct,
+                suspension_cooldown_days=self.pr_suspension_cooldown_days,
+                monitored_weight_factor=self.pr_monitored_weight_factor,
+                reduced_weight_factor=self.pr_reduced_weight_factor,
+            ),
+            sizing=SizingPolicy(
+                method=PositionSizingMethod(self.pr_sizing_method),
+                fixed_allocation_pct=self.pr_fixed_allocation_pct,
+                vol_target_pct=self.pr_vol_target_pct,
+                max_annualized_vol_pct=self.pr_max_annualized_vol_pct,
+                risk_per_trade_pct=self.pr_risk_per_trade_pct,
+                max_weight_pct=self.pr_max_weight_pct,
+                annualization=self.pr_annualization,
+            ),
+            allocation=AllocationPolicyConfig(
+                sharpe_weight=self.pr_allocation_sharpe_weight,
+                sortino_weight=self.pr_allocation_sortino_weight,
+                oos_return_weight=self.pr_allocation_oos_return_weight,
+                execution_weight=self.pr_allocation_execution_weight,
+                drawdown_weight=self.pr_allocation_drawdown_weight,
+                volatility_weight=self.pr_allocation_volatility_weight,
+                correlation_weight=self.pr_allocation_correlation_weight,
+                regime_weight=self.pr_allocation_regime_weight,
+                min_weight_pct=self.pr_allocation_min_weight_pct,
+                max_weight_pct=self.pr_allocation_max_weight_pct,
+            ),
+        )
+
+
 class BacktestSettingsMixin(BaseSettings):
     """Phase 6 — backtesting & SystemGate graduation."""
 
@@ -495,6 +603,7 @@ class Settings(
     StrategyResearchSettingsMixin,
     StrategyValidationSettingsMixin,
     StrategyExecutionSettingsMixin,
+    PortfolioRiskSettingsMixin,
     BaseSettings,
 ):
     model_config = SettingsConfigDict(

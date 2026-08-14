@@ -29,6 +29,14 @@ from qtrader.application.agents.risk import RiskAgent
 from qtrader.application.agents.scanner import MarketScanner
 from qtrader.application.agents.technical import TechnicalAgent
 from qtrader.application.execution.engine import StrategyExecutionEngine
+from qtrader.application.portfolio_mgmt import (
+    DrawdownGuard,
+    KillSwitch,
+    PortfolioManager,
+    PortfolioRiskAdapter,
+    PortfolioRiskEngine,
+    StrategyAllocator,
+)
 from qtrader.application.research import (
     BacktestAdapter,
     IndicatorAdapter,
@@ -551,6 +559,34 @@ class Container:
         c.register(
             StrategyValidationAdapter,
             instance=StrategyValidationAdapter(engine=strategy_validation_engine),
+        )
+
+        portfolio_risk_plan = self._settings.portfolio_risk_plan
+        risk_kill_switch = KillSwitch()
+        risk_drawdown_guard = DrawdownGuard(portfolio_risk_plan.drawdown_protection)
+        strategy_allocator = StrategyAllocator(portfolio_risk_plan.allocation)
+        risk_engine = PortfolioRiskEngine(
+            constraints=portfolio_risk_plan.constraints,
+            drawdown_protection=portfolio_risk_plan.drawdown_protection,
+            sizing_policy=portfolio_risk_plan.sizing,
+            kill_switch=risk_kill_switch,
+        )
+        portfolio_manager = PortfolioManager(
+            engine=risk_engine,
+            allocator=strategy_allocator,
+            drawdown_guard=risk_drawdown_guard,
+        )
+        c.register(KillSwitch, instance=risk_kill_switch)
+        c.register(DrawdownGuard, instance=risk_drawdown_guard)
+        c.register(StrategyAllocator, instance=strategy_allocator)
+        c.register(PortfolioRiskEngine, instance=risk_engine)
+        c.register(PortfolioManager, instance=portfolio_manager)
+        c.register(
+            PortfolioRiskAdapter,
+            instance=PortfolioRiskAdapter(
+                manager=portfolio_manager,
+                engine=risk_engine,
+            ),
         )
 
         c.register(
