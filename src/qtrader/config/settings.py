@@ -588,6 +588,115 @@ class StrategyExecutionSettingsMixin(BaseSettings):
         )
 
 
+class AiSettingsMixin(BaseSettings):
+    """Phase 6 — AI Strategy Selection & Multi-Agent Integration (research).
+
+    Everything the AI layer needs is configurable and defaults conservative.
+    Agent weights are versioned so any change is auditable; the news sentiment
+    model is either the offline ``lexicon`` (deterministic fallback) or the
+    lazy ``finbert`` wrapper (requires ``transformers``). Live trading remains
+    disabled by ``enable_live_trading`` at the application level.
+    """
+
+    ai_weights_version: str = "1.0"
+    ai_enabled_agents: str = (
+        "technical,news,fundamental,pattern,prediction,regime"
+    )
+    ai_agent_weights: str = (
+        "technical:1.0,news:0.8,fundamental:0.6,pattern:0.5,"
+        "prediction:0.7,regime:0.4"
+    )
+
+    ai_min_ensemble_abs_score: float = 0.15
+    ai_min_confidence: float = 0.0
+    ai_min_agreeing_agents: int = 1
+    ai_position_size_pct: float = 0.02
+    ai_leverage: float = 1.0
+
+    ai_news_model: str = "lexicon"
+    ai_finbert_model_name: str = "ProsusAI/finbert"
+    ai_news_lookback_hours: int = 24
+    ai_news_per_symbol_limit: int = 20
+
+    ai_execution_scenario: str = "baseline"
+    ai_execution_commission_bps: float = 10.0
+    ai_execution_max_participation_rate: float = 0.10
+    ai_execution_seed: int = 42
+
+    ai_ablation_risk_free_rate: float = 0.0
+    ai_ablation_periods_per_year: float = 252.0
+
+    ai_failure_max_agent_dispersion: float = 1.0
+    ai_failure_max_mean_confidence: float = 0.95
+    ai_failure_max_confidence_std: float = 0.25
+    ai_failure_news_staleness_hours: float = 48.0
+    ai_failure_drift_max_abs: float = 0.50
+    ai_failure_drift_history: int = 100
+
+    ai_ledger_path: str = "data/ai/decisions.jsonl"
+
+    @property
+    def ai_enabled_agent_list(self) -> list[str]:
+        """Parsed enabled agents (comma-separated, trimmed)."""
+        return [a.strip() for a in self.ai_enabled_agents.split(",") if a.strip()]
+
+    @property
+    def ai_weights_config(self) -> Any:
+        """A versioned :class:`~qtrader.application.ai.models.AgentWeightsConfig`."""
+        from qtrader.application.ai.models import AgentWeightsConfig
+
+        weights: dict[str, float] = {}
+        for token in self.ai_agent_weights.split(","):
+            token = token.strip()
+            if not token:
+                continue
+            if ":" in token:
+                agent, value = token.split(":", 1)
+                weights[agent.strip()] = float(value.strip())
+            else:
+                weights[token] = 1.0
+        enabled = tuple(self.ai_enabled_agent_list)
+        return AgentWeightsConfig(
+            version=self.ai_weights_version,
+            weights=weights,
+            enabled=enabled or (),
+        )
+
+    @property
+    def ai_decision_config(self) -> Any:
+        """A :class:`~qtrader.application.ai.decision.DecisionConfig`."""
+        from qtrader.application.ai.decision import DecisionConfig
+
+        return DecisionConfig(
+            min_ensemble_abs_score=self.ai_min_ensemble_abs_score,
+            min_confidence=self.ai_min_confidence,
+            min_agreeing_agents=self.ai_min_agreeing_agents,
+            position_size_pct=self.ai_position_size_pct,
+            leverage=self.ai_leverage,
+        )
+
+    @property
+    def ai_failure_config(self) -> Any:
+        """A :class:`~qtrader.application.ai.failure.FailureConfig`."""
+        from qtrader.application.ai.failure import FailureConfig
+
+        return FailureConfig(
+            max_agent_dispersion=self.ai_failure_max_agent_dispersion,
+            max_mean_confidence=self.ai_failure_max_mean_confidence,
+            max_confidence_std=self.ai_failure_max_confidence_std,
+            news_staleness_hours=self.ai_failure_news_staleness_hours,
+            drift_max_abs=self.ai_failure_drift_max_abs,
+            drift_history=self.ai_failure_drift_history,
+        )
+
+    @property
+    def ai_selector_config(self) -> Any:
+        """A :class:`~qtrader.application.ai.selector.SelectorConfig`."""
+        from qtrader.application.ai.selector import SelectorConfig
+
+        return SelectorConfig()
+
+
 class Settings(
     DatabaseSettingsMixin,
     ApiSettingsMixin,
@@ -604,6 +713,7 @@ class Settings(
     StrategyValidationSettingsMixin,
     StrategyExecutionSettingsMixin,
     PortfolioRiskSettingsMixin,
+    AiSettingsMixin,
     BaseSettings,
 ):
     model_config = SettingsConfigDict(

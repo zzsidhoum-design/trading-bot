@@ -28,7 +28,22 @@ from qtrader.application.agents.prediction import PredictionAgent
 from qtrader.application.agents.risk import RiskAgent
 from qtrader.application.agents.scanner import MarketScanner
 from qtrader.application.agents.technical import TechnicalAgent
+from qtrader.application.ai.decision import DecisionEngine
+from qtrader.application.ai.execution_integration import SimulatedExecution
+from qtrader.application.ai.failure import AiFailureMonitor
+from qtrader.application.ai.records import DecisionLedger
+from qtrader.application.ai.regime import MarketRegimeAgent
+from qtrader.application.ai.risk_gate import AiRiskGate
+from qtrader.application.ai.selector import StrategySelector
+from qtrader.application.ai.sentiment import (
+    FinancialSentimentModel,
+    FinBERTModel,
+    LexiconFinancialSentimentModel,
+    NewsSentimentPipeline,
+)
+from qtrader.application.ai.signals import AgentSignalProvider, WeightedEnsemble
 from qtrader.application.execution.engine import StrategyExecutionEngine
+from qtrader.application.execution.models import ExecutionScenario
 from qtrader.application.portfolio_mgmt import (
     DrawdownGuard,
     KillSwitch,
@@ -344,12 +359,21 @@ class Container:
         )
         c.register(TechnicalAgent, instance=technical)
 
+        if self._settings.ai_news_model == "finbert":
+            news_sentiment_model: FinancialSentimentModel = FinBERTModel(
+                model_name=self._settings.ai_finbert_model_name
+            )
+        else:
+            news_sentiment_model = LexiconFinancialSentimentModel()
+        c.register(FinancialSentimentModel, instance=news_sentiment_model)
+
         news = NewsAgent(
             provider=c.resolve(NewsProvider),
             news_repo=c.resolve(NewsRepository),
             signals=c.resolve(SignalRepository),
             bus=bus,
             llm=c.resolve(LLMClient),
+            sentiment_model=news_sentiment_model,
             lookback_hours=self._settings.news_lookback_hours,
             per_symbol_limit=self._settings.news_per_symbol_limit,
         )
@@ -588,6 +612,47 @@ class Container:
                 engine=risk_engine,
             ),
         )
+
+        ai_regime_agent = MarketRegimeAgent()
+        ai_news_pipeline = NewsSentimentPipeline(
+            provider=c.resolve(NewsProvider),
+            news_repo=c.resolve(NewsRepository),
+            model=news_sentiment_model,
+            lookback_hours=self._settings.ai_news_lookback_hours,
+            per_symbol_limit=self._settings.ai_news_per_symbol_limit,
+        )
+        ai_signal_provider = AgentSignalProvider(
+            signals=c.resolve(SignalRepository),
+            predictions=c.resolve(PredictionRepository),
+            regime_agent=ai_regime_agent,
+            news_pipeline=ai_news_pipeline,
+        )
+        ai_ensemble = WeightedEnsemble(self._settings.ai_weights_config)
+        ai_selector = StrategySelector(self._settings.ai_selector_config)
+        ai_decision_engine = DecisionEngine(
+            ensemble=ai_ensemble,
+            config=self._settings.ai_decision_config,
+        )
+        ai_risk_gate = AiRiskGate(portfolio_manager=portfolio_manager)
+        ai_simulated_execution = SimulatedExecution(
+            scenario=ExecutionScenario(self._settings.ai_execution_scenario),
+            commission_bps=self._settings.ai_execution_commission_bps,
+            max_participation_rate=self._settings.ai_execution_max_participation_rate,
+            seed=self._settings.ai_execution_seed,
+        )
+        ai_ledger = DecisionLedger(path=self._settings.ai_ledger_path)
+        ai_failure_monitor = AiFailureMonitor(self._settings.ai_failure_config)
+
+        c.register(MarketRegimeAgent, instance=ai_regime_agent)
+        c.register(NewsSentimentPipeline, instance=ai_news_pipeline)
+        c.register(AgentSignalProvider, instance=ai_signal_provider)
+        c.register(WeightedEnsemble, instance=ai_ensemble)
+        c.register(StrategySelector, instance=ai_selector)
+        c.register(DecisionEngine, instance=ai_decision_engine)
+        c.register(AiRiskGate, instance=ai_risk_gate)
+        c.register(SimulatedExecution, instance=ai_simulated_execution)
+        c.register(DecisionLedger, instance=ai_ledger)
+        c.register(AiFailureMonitor, instance=ai_failure_monitor)
 
         c.register(
             DashboardService,

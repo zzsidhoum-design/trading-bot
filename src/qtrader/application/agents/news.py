@@ -15,6 +15,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import ClassVar
 
 from qtrader.application.agents.base import AgentBase, AgentContext
+from qtrader.application.ai.sentiment import FinancialSentimentModel
 from qtrader.application.services.news_analysis import NewsAnalysis
 from qtrader.domain.entities import NewsItem, Signal
 from qtrader.domain.events import DomainEvent, NewsSignalGenerated, ScanCompleted
@@ -67,6 +68,7 @@ class NewsAgent(AgentBase):
         signals: SignalRepository,
         bus: EventBus,
         llm: LLMClient | None = None,
+        sentiment_model: FinancialSentimentModel | None = None,
         *,
         lookback_hours: int = 24,
         per_symbol_limit: int = 20,
@@ -76,6 +78,7 @@ class NewsAgent(AgentBase):
         self._signals = signals
         self._bus = bus
         self._llm = llm
+        self._sentiment_model = sentiment_model
         self._lookback_hours = lookback_hours
         self._limit = per_symbol_limit
 
@@ -92,7 +95,7 @@ class NewsAgent(AgentBase):
 
         analyzed: list[NewsItem] = []
         for item in raw:
-            if self._llm is not None:
+            if self._llm is not None or self._sentiment_model is not None:
                 result = await self._analyze(item, symbol)
                 if result is not None:
                     analyzed.append(result)
@@ -136,6 +139,37 @@ class NewsAgent(AgentBase):
         return score
 
     async def _analyze(self, item: NewsItem, symbol: str) -> NewsItem | None:
+        if self._sentiment_model is not None:
+            text = f"{item.title}\n{item.content or ''}"
+            result = self._sentiment_model.analyze(text, symbol=symbol)
+            if result.error:
+                self._logger.warning(
+                    "news.sentiment_failed",
+                    url=item.url,
+                    model=result.model,
+                    error=result.error_message,
+                )
+                return None
+            return replace(
+                item,
+                sentiment_score=_dec_score(result.sentiment),
+                analysis_confidence=_dec_score(result.confidence),
+                expected_market_impact=(
+                    "HIGH"
+                    if abs(result.sentiment) >= 0.6
+                    else ("MEDIUM" if abs(result.sentiment) >= 0.3 else "LOW")
+                ),
+                impact_direction=(
+                    1 if result.sentiment > 0.15 else (-1 if result.sentiment < -0.15 else 0)
+                ),
+                summary=result.summary,
+                analyzed_at=datetime.now(UTC),
+                metadata={
+                    **item.metadata,
+                    "analysis_schema": result.model,
+                    "relevance": result.relevance,
+                },
+            )
         llm = self._llm
         if llm is None:
             return None
@@ -147,7 +181,7 @@ class NewsAgent(AgentBase):
         )
         user_prompt = f"Symbol: {symbol}\nTitle: {item.title}\nBody: {(item.content or '')[:1000]}"
         try:
-            result: NewsAnalysis = await llm.complete_json(
+            analysis: NewsAnalysis = await llm.complete_json(
                 system_prompt, user_prompt, NewsAnalysis
             )
         except Exception as exc:
@@ -156,12 +190,12 @@ class NewsAgent(AgentBase):
 
         return replace(
             item,
-            sentiment_score=_dec_score(result.sentiment_score),
-            summary=result.summary,
-            expected_market_impact=result.expected_market_impact,
-            impact_direction=result.impact_direction,
-            analysis_confidence=_dec_score(result.confidence),
-            categories=result.categories or None,
+            sentiment_score=_dec_score(analysis.sentiment_score),
+            summary=analysis.summary,
+            expected_market_impact=analysis.expected_market_impact,
+            impact_direction=analysis.impact_direction,
+            analysis_confidence=_dec_score(analysis.confidence),
+            categories=analysis.categories or None,
             analyzed_at=datetime.now(UTC),
             metadata={**item.metadata, "analysis_schema": "NewsAnalysis"},
         )
