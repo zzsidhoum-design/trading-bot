@@ -1,8 +1,10 @@
 """Alpaca broker adapter (HTTP API via httpx).
 
-Configuration comes from environment variables:
-``APCA_API_KEY_ID`` / ``APCA_API_SECRET_KEY``. Paper trading is used unless
-``ALPACA_LIVE=true``.
+Configuration comes from environment variables. The canonical names are the
+project's ``ALPACA_API_KEY`` / ``ALPACA_SECRET_KEY`` / ``ALPACA_PAPER``
+settings; the Alpaca-native ``APCA_API_KEY_ID`` / ``APCA_API_SECRET_KEY`` are
+also honored for compatibility. Paper trading is used unless ``ALPACA_PAPER``
+is ``false`` or ``ALPACA_LIVE=true``.
 """
 
 from __future__ import annotations
@@ -31,13 +33,23 @@ class AlpacaBroker(BrokerGateway):
         live: bool = False,
         base_url: str | None = None,
     ) -> None:
-        self._api_key = api_key or os.environ.get("APCA_API_KEY_ID", "")
-        self._secret = secret or os.environ.get("APCA_API_SECRET_KEY", "")
+        self._api_key = (
+            api_key
+            or os.environ.get("APCA_API_KEY_ID")
+            or os.environ.get("ALPACA_API_KEY", "")
+        )
+        self._secret = (
+            secret
+            or os.environ.get("APCA_API_SECRET_KEY")
+            or os.environ.get("ALPACA_SECRET_KEY", "")
+        )
+        live = live or os.environ.get("ALPACA_LIVE", "").lower() == "true"
         self._base_url = base_url or (_LIVE_URL if live else _PAPER_URL)
         if not self._api_key or not self._secret:
             raise RuntimeError(
                 "Alpaca credentials are not configured "
-                "(APCA_API_KEY_ID/APCA_API_SECRET_KEY)"
+                "(ALPACA_API_KEY/ALPACA_SECRET_KEY or "
+                "APCA_API_KEY_ID/APCA_API_SECRET_KEY)"
             )
         self._client = httpx.AsyncClient(
             base_url=self._base_url,

@@ -588,6 +588,44 @@ class StrategyExecutionSettingsMixin(BaseSettings):
         )
 
 
+class PaperSettingsMixin(BaseSettings):
+    """Phase 7 — paper trading & shadow deployment.
+
+    ``paper_shadow_mode`` runs the full decision pipeline in shadow mode: every
+    decision is recorded but no paper order is ever submitted. Acceptance
+    thresholds are operational (fill rate, slippage, latency, drawdown,
+    divergence, data reliability, failure rate) — deliberately not profit-based.
+    """
+
+    paper_ledger_path: str = "data/paper/orders.jsonl"
+    paper_default_price: float = 100.0
+    paper_shadow_mode: bool = False
+    paper_telemetry_enabled: bool = True
+    paper_window_days: int = 30
+    paper_accept_min_fill_rate: float = 0.90
+    paper_accept_max_slippage_bps: float = 50.0
+    paper_accept_max_avg_latency_ms: float = 5000.0
+    paper_accept_max_drawdown: float = 0.20
+    paper_accept_max_divergence: float = 0.10
+    paper_accept_min_data_reliability: float = 0.95
+    paper_accept_max_failure_rate: float = 0.05
+
+    @property
+    def paper_acceptance_thresholds(self) -> Any:
+        """A :class:`~qtrader.application.paper.acceptance.AcceptanceThresholds`."""
+        from qtrader.application.paper.acceptance import AcceptanceThresholds
+
+        return AcceptanceThresholds(
+            min_fill_rate=self.paper_accept_min_fill_rate,
+            max_slippage_bps=self.paper_accept_max_slippage_bps,
+            max_avg_latency_ms=self.paper_accept_max_avg_latency_ms,
+            max_drawdown=self.paper_accept_max_drawdown,
+            max_paper_research_divergence=self.paper_accept_max_divergence,
+            min_data_reliability=self.paper_accept_min_data_reliability,
+            max_failure_rate=self.paper_accept_max_failure_rate,
+        )
+
+
 class AiSettingsMixin(BaseSettings):
     """Phase 6 — AI Strategy Selection & Multi-Agent Integration (research).
 
@@ -714,6 +752,7 @@ class Settings(
     StrategyExecutionSettingsMixin,
     PortfolioRiskSettingsMixin,
     AiSettingsMixin,
+    PaperSettingsMixin,
     BaseSettings,
 ):
     model_config = SettingsConfigDict(

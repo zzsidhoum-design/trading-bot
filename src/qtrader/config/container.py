@@ -11,6 +11,7 @@ hooks — instead of an implicit ``lru_cache`` singleton.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
+from decimal import Decimal
 from typing import TypeVar, cast
 
 import punq
@@ -44,6 +45,15 @@ from qtrader.application.ai.sentiment import (
 from qtrader.application.ai.signals import AgentSignalProvider, WeightedEnsemble
 from qtrader.application.execution.engine import StrategyExecutionEngine
 from qtrader.application.execution.models import ExecutionScenario
+from qtrader.application.paper import (
+    AcceptanceEvaluator,
+    OperationalTelemetry,
+    PaperExecutionBroker,
+    PaperOrderLedger,
+    PaperTradingService,
+    PaperVsResearchComparator,
+    ShadowBroker,
+)
 from qtrader.application.portfolio_mgmt import (
     DrawdownGuard,
     KillSwitch,
@@ -667,17 +677,64 @@ class Container:
             ),
         )
 
-        broker: BrokerGateway
+        raw_broker: BrokerGateway
         if self._settings.broker_provider == "alpaca":
-            broker = AlpacaBroker(
+            raw_broker = AlpacaBroker(
                 api_key=self._settings.alpaca_api_key,
                 secret=self._settings.alpaca_secret_key,
                 live=not self._settings.alpaca_paper,
             )
         else:
-            broker = PaperBroker(prices=c.resolve(PriceRepository))
+            raw_broker = PaperBroker(prices=c.resolve(PriceRepository))
+
+        paper_ledger = PaperOrderLedger(self._settings.paper_ledger_path)
+        paper_telemetry = OperationalTelemetry(
+            agent_metrics=c.resolve(AgentMetricRepository),
+            logs=c.resolve(SystemLogRepository),
+        )
+        broker: BrokerGateway = raw_broker
+        paper_mode = self._settings.qtrader_mode is TradingMode.PAPER or (
+            self._settings.qtrader_mode is TradingMode.LIVE
+            and self._settings.live_enabled
+        )
+        if self._settings.paper_shadow_mode:
+            broker = ShadowBroker(
+                ledger=paper_ledger,
+                telemetry=paper_telemetry,
+                prices=c.resolve(PriceRepository),
+                default_price=Decimal(str(self._settings.paper_default_price)),
+            )
+        elif self._settings.paper_telemetry_enabled and paper_mode:
+            broker = PaperExecutionBroker(
+                inner=raw_broker,
+                ledger=paper_ledger,
+                telemetry=paper_telemetry,
+                prices=c.resolve(PriceRepository),
+                default_price=Decimal(str(self._settings.paper_default_price)),
+            )
         self._broker = broker
         c.register(BrokerGateway, instance=broker)
+        c.register(PaperOrderLedger, instance=paper_ledger)
+        c.register(OperationalTelemetry, instance=paper_telemetry)
+        c.register(
+            PaperTradingService,
+            instance=PaperTradingService(
+                ledger=paper_ledger,
+                telemetry=paper_telemetry,
+                broker=broker,
+                shadow=self._settings.paper_shadow_mode
+                or isinstance(broker, ShadowBroker),
+                default_price=Decimal(str(self._settings.paper_default_price)),
+            ),
+        )
+        c.register(
+            PaperVsResearchComparator,
+            instance=PaperVsResearchComparator(),
+        )
+        c.register(
+            AcceptanceEvaluator,
+            instance=AcceptanceEvaluator(self._settings.paper_acceptance_thresholds),
+        )
         c.register(
             AllocationPolicy,
             instance=EqualWeightAllocation(self._settings.allocation_weight_per_trade),
